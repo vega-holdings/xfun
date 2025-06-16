@@ -520,7 +520,7 @@
 
             const self = this;
             const autoBlockWords = settings.autoBlockWords.split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
-            
+
             const scanAutoBlock = () => {
                 $('div[data-testid="UserCell"], div[data-testid="User-Name"]').each((_, el) => {
                     const $el = $(el);
@@ -537,11 +537,19 @@
                 });
             };
 
-            new MutationObserver(scanAutoBlock).observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-            scanAutoBlock();
+            const startObserver = () => {
+                new MutationObserver(scanAutoBlock).observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+                scanAutoBlock();
+            };
+
+            if (document.body) {
+                startObserver();
+            } else {
+                document.addEventListener('DOMContentLoaded', startObserver);
+            }
         }
 
         shouldAutoBlock(username, displayName, autoBlockWords) {
@@ -621,9 +629,17 @@
         }
 
         init() {
-            this.createSettingsPanel();
-            this.registerMenuCommand();
-            log('Settings UI initialized');
+            const start = () => {
+                this.createSettingsPanel();
+                this.registerMenuCommand();
+                log('Settings UI initialized');
+            };
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', start);
+            } else {
+                start();
+            }
         }
 
         registerMenuCommand() {
@@ -809,30 +825,32 @@
 
     function initializeModules() {
         loadSettings();
-        
-        // Initialize UI first
-        settingsUI = new SettingsUI();
-        
-        // Initialize modules based on settings
-        if (settings.filterEnabled) {
-            filterModule = new TwitterFilterModule();
-        }
-        
-        if (settings.notInterestedEnabled) {
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', () => {
-                    notInterestedModule = new NotInterestedModule();
-                });
-            } else {
+
+        const start = () => {
+            // Initialize UI first
+            settingsUI = new SettingsUI();
+
+            // Initialize modules based on settings
+            if (settings.filterEnabled) {
+                filterModule = new TwitterFilterModule();
+            }
+
+            if (settings.notInterestedEnabled) {
                 notInterestedModule = new NotInterestedModule();
             }
-        }
-        
-        if (settings.blockToolsEnabled) {
-            blockModule = new BlockWithLoveModule();
-        }
 
-        log('Twitter Ultimate Tool initialized with settings:', settings);
+            if (settings.blockToolsEnabled) {
+                blockModule = new BlockWithLoveModule();
+            }
+
+            log('Twitter Ultimate Tool initialized with settings:', settings);
+        };
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', start);
+        } else {
+            start();
+        }
     }
 
     // Start the tool
