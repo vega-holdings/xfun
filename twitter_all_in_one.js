@@ -341,9 +341,9 @@
 
                     if (notInterestedItem) {
                         log('Found Not Interested option, clicking it');
-                        notInterestedItem.click();
                         notInterestedItem.blur();
-                        setTimeout(() => moreButton.focus(), 0);
+                        moreButton.focus();
+                        notInterestedItem.click();
                     } else {
                         log('Not Interested option not found in menu');
                         moreButton.click();
