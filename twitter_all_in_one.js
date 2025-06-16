@@ -40,10 +40,11 @@
         blockToolsEnabled: true,
         autoBlockEnabled: true,
         autoBlockWords: 'groyper,fella,1488,noticer,troon',
-        
+
         // UI Settings
         showSettingsPanel: true,
-        debugMode: false
+        debugMode: false,
+        eventLogging: true
     };
 
     let settings = { ...DEFAULT_SETTINGS };
@@ -77,6 +78,15 @@
         console.log('%c[Twitter Ultimate]', 'background: #1DA1F2; color: white', ...args);
     }
 
+ oig3ub-codex/ensure-full-functionality-and-filtering-options
+    function eventLog(...args) {
+        if (settings.eventLogging) {
+            console.log('%c[Twitter Event]', 'background: #FFAD1F; color: black', ...args);
+        }
+    }
+
+=======
+ main
     // ==================== KEYWORD/RATIO FILTER MODULE ====================
     class TwitterFilterModule {
         constructor() {
@@ -239,7 +249,7 @@
                 this.hideTweet(tweetResults);
                 this.filteredCount++;
                 info(`Filtered tweet from @${userData.handle}`);
-                log(`Reasons: ${reasons.join('; ')}`);
+                eventLog(`Hidden @${userData.handle}`, `Reasons: ${reasons.join('; ')}`);
                 log(`Filtered count: ${this.filteredCount}`);
             } else {
                 log(`Tweet from @${userData.handle} passed filters`);
@@ -341,6 +351,8 @@
 
                     if (notInterestedItem) {
                         log('Found Not Interested option, clicking it');
+                        notInterestedItem.blur();
+                        moreButton.focus();
                         notInterestedItem.click();
                         notInterestedItem.blur();
                         setTimeout(() => moreButton.focus(), 0);
@@ -545,9 +557,11 @@
                     if (!link) return;
                     const username = $(link).attr('href').split('/')[1];
                     const displayName = $el.text();
-                    if (!self.auto_blocked.has(username) && self.shouldAutoBlock(username, displayName, autoBlockWords)) {
+                    const reason = self.getAutoBlockReason(username, displayName, autoBlockWords);
+                    if (!self.auto_blocked.has(username) && reason) {
                         self.auto_blocked.add(username);
-                        self.blockByScreenName(username);
+                        eventLog(`Auto-blocking @${username}`, `Matched word: "${reason}"`);
+                        self.blockByScreenName(username, reason);
                     }
                 });
             };
@@ -568,12 +582,19 @@
         }
 
         shouldAutoBlock(username, displayName, autoBlockWords) {
-            const u = (username || '').toLowerCase();
-            const d = (displayName || '').toLowerCase();
-            return autoBlockWords.some(w => u.includes(w) || d.includes(w));
+            return this.getAutoBlockReason(username, displayName, autoBlockWords) !== null;
         }
 
-        async blockByScreenName(name) {
+        getAutoBlockReason(username, displayName, autoBlockWords) {
+            const u = (username || '').toLowerCase();
+            const d = (displayName || '').toLowerCase();
+            for (const w of autoBlockWords) {
+                if (u.includes(w) || d.includes(w)) return w;
+            }
+            return null;
+        }
+
+        async blockByScreenName(name, reason) {
             try {
                 const resp = await this.safeCall(
                     'userByScreenName',
@@ -581,6 +602,7 @@
                 );
                 const id = resp.data.data.user.result.rest_id;
                 await this.requestLimit(() => this.blockUser(id));
+                eventLog(`Blocked @${name}`, reason ? `Reason: ${reason}` : '');
                 log(`Auto-blocked user: @${name}`);
             } catch (e) {
                 console.error('[TBWL] auto block failed', name, e);
@@ -588,6 +610,7 @@
         }
 
         blockUser(id) {
+            eventLog('Blocking user ID', id);
             return this.ajax.post('/1.1/blocks/create.json', Qs.stringify({
                 user_id: id
             }), {
@@ -598,6 +621,7 @@
         }
 
         muteUser(id) {
+            eventLog('Muting user ID', id);
             return this.ajax.post('/1.1/mutes/users/create.json', Qs.stringify({
                 user_id: id
             }), {
@@ -714,7 +738,8 @@
 
                     <div class="setting-section">
                         <h3>⚙️ General</h3>
-                        <label><input type="checkbox" id="debugMode"> Debug Mode</label>
+                        <label><input type="checkbox" id="debugMode"> Debug Mode</label><br>
+                        <label><input type="checkbox" id="eventLogging"> Log Account Actions</label>
                     </div>
 
                     <div style="margin-top: 20px; text-align: center;">
@@ -783,6 +808,7 @@
             $('#autoBlockEnabled').prop('checked', settings.autoBlockEnabled);
             $('#autoBlockWords').val(settings.autoBlockWords);
             $('#debugMode').prop('checked', settings.debugMode);
+            $('#eventLogging').prop('checked', settings.eventLogging);
         }
 
         saveSettingsFromUI() {
@@ -797,6 +823,7 @@
             settings.autoBlockEnabled = $('#autoBlockEnabled').is(':checked');
             settings.autoBlockWords = $('#autoBlockWords').val();
             settings.debugMode = $('#debugMode').is(':checked');
+            settings.eventLogging = $('#eventLogging').is(':checked');
 
             saveSettings();
             this.hideSettingsPanel();
