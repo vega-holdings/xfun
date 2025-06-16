@@ -78,12 +78,15 @@
         console.log('%c[Twitter Ultimate]', 'background: #1DA1F2; color: white', ...args);
     }
 
+ oig3ub-codex/ensure-full-functionality-and-filtering-options
     function eventLog(...args) {
         if (settings.eventLogging) {
             console.log('%c[Twitter Event]', 'background: #FFAD1F; color: black', ...args);
         }
     }
 
+=======
+ main
     // ==================== KEYWORD/RATIO FILTER MODULE ====================
     class TwitterFilterModule {
         constructor() {
@@ -247,7 +250,6 @@
                 this.filteredCount++;
                 info(`Filtered tweet from @${userData.handle}`);
                 eventLog(`Hidden @${userData.handle}`, `Reasons: ${reasons.join('; ')}`);
-                log(`Reasons: ${reasons.join('; ')}`);
                 log(`Filtered count: ${this.filteredCount}`);
             } else {
                 log(`Tweet from @${userData.handle} passed filters`);
@@ -352,6 +354,8 @@
                         notInterestedItem.blur();
                         moreButton.focus();
                         notInterestedItem.click();
+                        notInterestedItem.blur();
+                        setTimeout(() => moreButton.focus(), 0);
                     } else {
                         log('Not Interested option not found in menu');
                         moreButton.click();
