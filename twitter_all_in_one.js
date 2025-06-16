@@ -72,22 +72,30 @@
         }
     }
 
+    // Log message regardless of debug setting
+    function info(...args) {
+        console.log('%c[Twitter Ultimate]', 'background: #1DA1F2; color: white', ...args);
+    }
+
     // ==================== KEYWORD/RATIO FILTER MODULE ====================
     class TwitterFilterModule {
         constructor() {
             this.bannedWords = [];
             this.whitelistedHandles = new Set();
             this.blf_exception_log = [];
+            this.filteredCount = 0;
             this.init();
         }
 
         init() {
             if (!settings.filterEnabled) return;
-            
+
             this.updateBannedWords();
             this.updateWhitelistedHandles();
             this.hookXHR();
-            log('Filter module initialized');
+            info('Filter module initialized');
+            info(`Banned words: ${this.bannedWords.join(', ') || 'none'}`);
+            info(`Follower limit: ${settings.followLimit}, ratio limit: ${settings.ratioLimit}`);
         }
 
         updateBannedWords() {
@@ -229,7 +237,12 @@
             const reasons = this.getHideReasons(userData);
             if (reasons.length > 0) {
                 this.hideTweet(tweetResults);
-                log(`Filtered tweet from @${userData.handle} (followers: ${userData.followers}, following: ${userData.friends_count}). Reasons: ${reasons.join("; ")}`);
+                this.filteredCount++;
+                info(`Filtered tweet from @${userData.handle}`);
+                log(`Reasons: ${reasons.join('; ')}`);
+                log(`Filtered count: ${this.filteredCount}`);
+            } else {
+                log(`Tweet from @${userData.handle} passed filters`);
             }
         }
 
@@ -329,6 +342,8 @@
                     if (notInterestedItem) {
                         log('Found Not Interested option, clicking it');
                         notInterestedItem.click();
+                        notInterestedItem.blur();
+                        setTimeout(() => moreButton.focus(), 0);
                     } else {
                         log('Not Interested option not found in menu');
                         moreButton.click();
@@ -650,7 +665,7 @@
 
         createSettingsPanel() {
             this.panel = $(`
-                <div id="twitter-ultimate-settings" style="
+                <div id="twitter-ultimate-settings" inert style="
                     position: fixed;
                     top: 50%;
                     left: 50%;
@@ -725,6 +740,7 @@
             `);
 
             $('body').append(this.panel);
+            this.panel.prop('inert', true);
             this.setupEventHandlers();
             this.loadSettingsIntoUI();
         }
@@ -745,10 +761,13 @@
 
         showSettingsPanel() {
             this.loadSettingsIntoUI();
+            this.panel.prop('inert', false);
             this.panel.fadeIn();
         }
 
         hideSettingsPanel() {
+            this.panel.find(':focus').blur();
+            this.panel.prop('inert', true);
             this.panel.fadeOut();
         }
 
@@ -781,7 +800,9 @@
 
             saveSettings();
             this.hideSettingsPanel();
-            
+
+            info('Settings saved');
+
             // Show notification
             this.showNotification('Settings saved! Please refresh the page for all changes to take effect.');
             
@@ -797,6 +818,7 @@
                 saveSettings();
                 this.loadSettingsIntoUI();
                 this.showNotification('Settings reset to defaults!');
+                info('Settings reset to defaults');
             }
         }
 
@@ -833,17 +855,25 @@
             // Initialize modules based on settings
             if (settings.filterEnabled) {
                 filterModule = new TwitterFilterModule();
+            } else {
+                info('Filter module disabled via settings');
             }
 
             if (settings.notInterestedEnabled) {
                 notInterestedModule = new NotInterestedModule();
+            } else {
+                info('Not Interested module disabled via settings');
             }
 
             if (settings.blockToolsEnabled) {
                 blockModule = new BlockWithLoveModule();
+            } else {
+                info('Block With Love module disabled via settings');
             }
 
-            log('Twitter Ultimate Tool initialized with settings:', settings);
+            info('Twitter Ultimate Tool initialized');
+            info(`Follower limit: ${settings.followLimit}, ratio limit: ${settings.ratioLimit}`);
+            log('Debug mode is', settings.debugMode ? 'ON' : 'OFF');
         };
 
         if (document.readyState === 'loading') {
