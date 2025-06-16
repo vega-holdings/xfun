@@ -32,9 +32,11 @@
         followLimit: 100,
         ratioLimit: 10,
         
-        // Not Interested Button Settings
+        /*
+        // Not Interested Button Settings (disabled)
         notInterestedEnabled: true,
         onlyForYouFeed: true,
+        */
         
         // Block With Love Settings
         blockToolsEnabled: true,
@@ -282,6 +284,7 @@
         }
     }
 
+    /*
     // ==================== NOT INTERESTED BUTTON MODULE ====================
     class NotInterestedModule {
         constructor() {
@@ -425,6 +428,7 @@
         }
     }
 
+    */
     // ==================== BLOCK WITH LOVE MODULE ====================
     class BlockWithLoveModule {
         constructor() {
@@ -722,11 +726,13 @@
                         <label>Ratio Limit (following/followers): <input type="number" id="ratioLimit" style="width: 80px;"></label>
                     </div>
 
+                    <!--
                     <div class="setting-section">
                         <h3>👎 Not Interested Button</h3>
                         <label><input type="checkbox" id="notInterestedEnabled"> Show Not Interested Button</label><br>
                         <label><input type="checkbox" id="onlyForYouFeed"> Only on For You Feed</label>
                     </div>
+                    -->
 
                     <div class="setting-section">
                         <h3>🚫 Block Tools</h3>
@@ -802,8 +808,10 @@
             $('#whitelistedHandles').val(settings.whitelistedHandles);
             $('#followLimit').val(settings.followLimit);
             $('#ratioLimit').val(settings.ratioLimit);
+            /*
             $('#notInterestedEnabled').prop('checked', settings.notInterestedEnabled);
             $('#onlyForYouFeed').prop('checked', settings.onlyForYouFeed);
+            */
             $('#blockToolsEnabled').prop('checked', settings.blockToolsEnabled);
             $('#autoBlockEnabled').prop('checked', settings.autoBlockEnabled);
             $('#autoBlockWords').val(settings.autoBlockWords);
@@ -817,8 +825,10 @@
             settings.whitelistedHandles = $('#whitelistedHandles').val();
             settings.followLimit = parseInt($('#followLimit').val()) || 100;
             settings.ratioLimit = parseInt($('#ratioLimit').val()) || 10;
+            /*
             settings.notInterestedEnabled = $('#notInterestedEnabled').is(':checked');
             settings.onlyForYouFeed = $('#onlyForYouFeed').is(':checked');
+            */
             settings.blockToolsEnabled = $('#blockToolsEnabled').is(':checked');
             settings.autoBlockEnabled = $('#autoBlockEnabled').is(':checked');
             settings.autoBlockWords = $('#autoBlockWords').val();
@@ -886,11 +896,13 @@
                 info('Filter module disabled via settings');
             }
 
+            /*
             if (settings.notInterestedEnabled) {
                 notInterestedModule = new NotInterestedModule();
             } else {
                 info('Not Interested module disabled via settings');
             }
+            */
 
             if (settings.blockToolsEnabled) {
                 blockModule = new BlockWithLoveModule();
