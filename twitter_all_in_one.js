@@ -36,7 +36,7 @@
     const DEFAULT_SETTINGS = {
         // Keyword/Ratio Filter Settings
         filterEnabled: true,
-        bannedWords: 'groyper,nafo,goyim,goy',
+        bannedWords: 'groyper,nafo,goyim,goy,🇺🇸🇮🇱,🇮🇱🇺🇸',
         whitelistedHandles: 'someVIP,anotherVIP',
         followLimit: 100,
         ratioLimit: 5,
@@ -236,7 +236,7 @@
             }
 
             let reasons = [];
-            const handleDesc = ((user.handle || '') + " " + (user.description || '')).toLowerCase();
+            const handleDesc = ((user.handle || '') + " " + (user.name || '') + " " + (user.description || '')).toLowerCase();
             
             // Check banned words
             for (const w of this.bannedWords) {
