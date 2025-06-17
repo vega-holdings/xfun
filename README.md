@@ -5,7 +5,8 @@ A comprehensive userscript that combines multiple Twitter/X enhancement tools in
 ## 🚀 Features
 
 ### 🔍 **Content Filter**
-- **Keyword Filtering**: Hide tweets containing specific banned words in usernames or descriptions
+- **Keyword Filtering**: Hide tweets containing specific banned words in usernames, display names, or descriptions
+- **Emoji Filtering**: Filter accounts using specific emojis (including flag combinations like 🇺🇸🇮🇱)
 - **Ratio Filtering**: Hide accounts with suspicious following/follower ratios (e.g., following 10x more than followers)
 - **Minimum Followers**: Filter out accounts below a follower threshold
 - **Whitelist Support**: CSV-based whitelist to exempt specific accounts from filtering
@@ -18,8 +19,9 @@ A comprehensive userscript that combines multiple Twitter/X enhancement tools in
 - **Non-Intrusive**: Seamlessly integrates with Twitter's existing UI
 
 ### 🚫 **Block Tools**
-- **Auto-Block**: Automatically block accounts based on keywords in usernames/display names
-- **Mass Actions**: Block or mute all users who liked/retweeted specific posts
+- **Auto-Block**: Automatically block accounts based on keywords or emojis in usernames/display names
+- **Bulk Blocking**: Block or mute all users who retweeted or quote tweeted specific posts
+- **Multi-API Support**: Handles Twitter's multiple API calls for long retweeter lists
 - **List Management**: Block all members of a Twitter list
 - **Follower Management**: Block all followers of a specific account
 - **Rate Limited**: Smart request limiting to avoid API throttling
@@ -57,7 +59,7 @@ A comprehensive userscript that combines multiple Twitter/X enhancement tools in
 
 #### 🔍 Content Filter Settings
 - **Enable Content Filter**: Toggle the entire filtering system
-- **Banned Words**: Comma-separated list (e.g., `spam,bot,crypto`)
+- **Banned Words**: Comma-separated list supporting text and emojis (e.g., `spam,bot,crypto,🇺🇸🇮🇱,🤖`)
 - **Whitelisted Handles**: Comma-separated list (e.g., `verified_news,trusted_source`)
 - **Minimum Followers**: Accounts below this number get filtered (default: 100)
 - **Ratio Limit**: Hide accounts following X times more than their followers (default: 10)
@@ -67,9 +69,9 @@ A comprehensive userscript that combines multiple Twitter/X enhancement tools in
 - **Only on For You Feed**: Restrict to algorithmic timeline only
 
 #### 🚫 Block Tools Settings
-- **Enable Block Tools**: Activate mass blocking/muting features
-- **Enable Auto-Block**: Automatically block accounts with specific keywords
-- **Auto-Block Words**: Keywords that trigger automatic blocking
+- **Enable Block Tools**: Activate bulk blocking/muting features
+- **Enable Auto-Block**: Automatically block accounts with specific keywords or emojis
+- **Auto-Block Words**: Keywords and emojis that trigger automatic blocking
 
 #### ⚙️ General Settings
 - **Debug Mode**: Enable detailed console logging
@@ -77,10 +79,11 @@ A comprehensive userscript that combines multiple Twitter/X enhancement tools in
 ### Using Block Tools
 
 #### Block Tweet Interactions
-1. Navigate to a tweet's **likes** (`/status/123/likes`) or **retweets** (`/status/123/retweets`) page
-2. Block/mute controls will appear at the top
-3. Choose **"Block all"** or **"Mute all"**
-4. Optionally include the original tweet author
+1. Navigate to a tweet's **quotes** (`/status/123/quotes`) or **retweets** (`/status/123/retweets`) page
+2. Wait for the API data to load - bulk controls will appear showing user count
+3. Choose **"Block all"** or **"Mute all"** (or both)
+4. Use **"Preview (Dry Run)"** to see who would be affected without actually blocking
+5. The system automatically protects mutual followers from being blocked
 
 #### Block Followers
 1. Visit someone's **followers page** (`/username/followers`)
@@ -95,11 +98,11 @@ A comprehensive userscript that combines multiple Twitter/X enhancement tools in
 ### Aggressive Filtering Setup
 ```
 Content Filter: ✅ Enabled
-Banned Words: crypto,nft,web3,airdrop,giveaway,bot,spam
+Banned Words: crypto,nft,web3,airdrop,giveaway,bot,spam,🇺🇸🇮🇱,🤖,💰
 Minimum Followers: 500
 Ratio Limit: 5
 Auto-Block: ✅ Enabled
-Auto-Block Words: scam,fake,impersonator
+Auto-Block Words: scam,fake,impersonator,🇺🇸🇮🇱,🤖
 ```
 
 ### Light Filtering Setup
@@ -131,6 +134,8 @@ verified_news,breaking_news,official_account,trusted_friend
 - **Broad terms**: Catch variations (`crypto` catches `cryptocurrency`)
 - **Specific phrases**: Target exact matches (`100% guaranteed`)
 - **Handle patterns**: Include common spam patterns (`_official`, `real_`)
+- **Emoji combinations**: Use flag combinations (`🇺🇸🇮🇱`, `🇮🇱🇺🇸`) and single flags (`🇺🇸`, `🇮🇱`)
+- **Symbol filtering**: Target crypto/bot indicators (`🤖`, `💰`, `🚀`)
 
 ### Auto-Block Safety
 - Auto-block only triggers on new accounts you encounter
