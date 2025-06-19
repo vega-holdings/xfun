@@ -25,18 +25,12 @@
     
     // IMMEDIATE CONSOLE OUTPUT TO VERIFY SCRIPT LOADING
     console.log('%c🚀 TWITTER ULTIMATE USERSCRIPT LOADING...', 'background: red; color: white; font-size: 16px; padding: 5px;');
-    console.log('URL:', window.location.href);
-    console.log('User Agent:', navigator.userAgent);
-    console.log('Tampermonkey available:', typeof GM_setValue !== 'undefined');
-    console.log('jQuery available:', typeof $ !== 'undefined');
-    console.log('Axios available:', typeof axios !== 'undefined');
-    console.log('Qs available:', typeof Qs !== 'undefined');
 
     // ==================== SETTINGS MANAGEMENT ====================
     const DEFAULT_SETTINGS = {
         // Keyword/Ratio Filter Settings
         filterEnabled: true,
-        bannedWords: 'groyper,nafo,goyim',
+        bannedWords: '',
         whitelistedHandles: 'someVIP,anotherVIP',
         followLimit: 100,
         ratioLimit: 5,
@@ -50,27 +44,30 @@
         // Block With Love Settings
         blockToolsEnabled: true,
         autoBlockEnabled: true,
-        autoBlockWords: 'groyper,fella,1488,noticer,troon',
+        autoBlockWords: '',
 
         // UI Settings
         showSettingsPanel: true,
         debugMode: true,
-        eventLogging: true
+        eventLogging: true,
+        badgesEnabled: true
     };
 
     let settings = { ...DEFAULT_SETTINGS };
 
-    function loadSettings() {
-        try {
-            const saved = GM_getValue('twitterUltimateSettings', '{}');
-            console.log('🔧 Loaded saved settings:', saved);
-            settings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
-            console.log('🔧 Final bannedWords after merge:', settings.bannedWords);
-        } catch (e) {
-            console.log('[Twitter Ultimate] Failed to load settings, using defaults');
-            settings = { ...DEFAULT_SETTINGS };
+    function         loadSettings() {
+            try {
+                const saved = GM_getValue('twitterUltimateSettings', '{}');
+                console.log('🔧 Loaded saved settings:', saved);
+                settings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+                if (settings.debugMode) {
+                    console.log('🔧 Final bannedWords after merge:', settings.bannedWords);
+                }
+            } catch (e) {
+                console.log('[Twitter Ultimate] Failed to load settings, using defaults');
+                settings = { ...DEFAULT_SETTINGS };
+            }
         }
-    }
 
     function saveSettings() {
         try {
@@ -104,36 +101,45 @@
             this.whitelistedHandles = new Set();
             this.blf_exception_log = [];
             this.filteredCount = 0;
+            this.userCache = new Map(); // User cache for badge reapplication
+            this.sharedFollowersCache = new Map(); // In-memory cache for current session
+            this.CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
             this.init();
         }
 
         init() {
-            console.log('🔍 TwitterFilterModule.init() called');
+            log('TwitterFilterModule.init() called');
             if (!settings.filterEnabled) {
-                console.log('❌ Filter disabled in settings, aborting init');
+                info('Filter disabled in settings, aborting init');
                 return;
             }
 
-            console.log('⚙️ Initializing filter settings...');
+            log('Initializing filter settings...');
             this.updateBannedWords();
             this.updateWhitelistedHandles();
-            console.log('🔌 Setting up XHR hooks...');
+            log('Setting up XHR hooks...');
             this.hookXHR();
             
-            console.log('✅ FILTER MODULE FULLY INITIALIZED');
-            console.log(`🚫 Banned words: ${this.bannedWords.join(', ') || 'none'}`);
-            console.log(`👥 Whitelisted handles: ${Array.from(this.whitelistedHandles).join(', ') || 'none'}`);
-            console.log(`📊 Follower limit: ${settings.followLimit}, ratio limit: ${settings.ratioLimit}`);
-            console.log('🎯 Ready to filter Twitter content!');
+            // Start cache reapplication for badges
+            this.startCacheReapplication();
+            
+            // Clean up expired persistent cache entries
+            this.clearExpiredPersistentCache();
+            
+            info('FILTER MODULE FULLY INITIALIZED');
+            info(`Banned words: ${this.bannedWords.join(', ') || 'none'}`);
+            info(`Whitelisted handles: ${Array.from(this.whitelistedHandles).join(', ') || 'none'}`);
+            info(`Follower limit: ${settings.followLimit}, ratio limit: ${settings.ratioLimit}`);
+            info('Ready to filter Twitter content!');
         }
 
         updateBannedWords() {
-            console.log('🔧 Raw bannedWords setting:', settings.bannedWords);
+            log('Raw bannedWords setting:', settings.bannedWords);
             this.bannedWords = settings.bannedWords.split(',')
                 .map(w => w.trim().toLowerCase())
                 .filter(Boolean);
-            console.log('🔧 Processed bannedWords array:', this.bannedWords);
-            console.log('🔧 bannedWords count:', this.bannedWords.length);
+            log('Processed bannedWords array:', this.bannedWords);
+            log('bannedWords count:', this.bannedWords.length);
         }
 
         updateWhitelistedHandles() {
@@ -145,7 +151,7 @@
         }
 
         hookXHR() {
-            console.log('🔌 Setting up XHR hooks for Twitter API interception...');
+            log('Setting up XHR hooks for Twitter API interception...');
             const self = this;
             const oldXHROpen = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function() {
@@ -161,20 +167,21 @@
                         url.includes('/graphql/') ||
                         url.includes('/2/timeline/') ||
                         url.includes('timeline.json') ||
-                        url.includes('home.json')
+                        url.includes('home.json') ||
+                        url.includes('/Followers?')
                     );
                     
                     if (isTargetUrl) {
-                        console.log('🎯 INTERCEPTING REQUEST:', url);
+                        log('INTERCEPTING REQUEST:', url);
                         if (!this._hooked) {
                             this._hooked = true;
                             this.hookResponse(self);
-                            console.log('✅ Response hook attached');
+                            log('Response hook attached');
                         }
                     } else {
                         // Only log non-target URLs occasionally to avoid spam
                         if (Math.random() < 0.1) {
-                            console.log('📡 Non-target request:', url.substring(0, 100));
+                            log('Non-target request:', url.substring(0, 100));
                         }
                     }
                 }
@@ -182,22 +189,22 @@
             };
 
             XMLHttpRequest.prototype.hookResponse = function(filterInstance) {
-                console.log('🔗 Setting up response interceptor...');
+                log('Setting up response interceptor...');
                 const xhr = this;
                 const getter = function() {
-                    console.log('📥 PROCESSING RESPONSE...');
+                    log('PROCESSING RESPONSE...');
                     delete xhr.responseText;
                     let response = xhr.responseText;
 
                     try {
-                        console.log('🔍 Parsing JSON response...');
+                        log('Parsing JSON response...');
                         let json = JSON.parse(response);
-                        console.log('✅ JSON parsed successfully, filtering content...');
+                        log('JSON parsed successfully, filtering content...');
                         filterInstance.filterContent(json);
                         response = JSON.stringify(json);
-                        console.log('✅ Response processed and modified');
+                        log('Response processed and modified');
                     } catch (e) {
-                        console.log('❌ Error processing response:', e.message);
+                        log('Error processing response:', e.message);
                         filterInstance.logException(e);
                     }
 
@@ -244,13 +251,13 @@
             const handleDesc = ((user.handle || '') + " " + (user.name || '') + " " + (user.description || '')).toLowerCase();
             
             // Check banned words
-            console.log(`🔍 Checking banned words for @${user.handle}:`);
-            console.log(`🔍 handleDesc: "${handleDesc}"`);
-            console.log(`🔍 bannedWords:`, this.bannedWords);
+            log(`Checking banned words for @${user.handle}:`);
+            log(`handleDesc: "${handleDesc}"`);
+            log(`bannedWords:`, this.bannedWords);
             
             for (const w of this.bannedWords) {
                 if (w && handleDesc.includes(w.toLowerCase())) {
-                    console.log(`🚫 MATCHED banned word: "${w}" in "${handleDesc}"`);
+                    log(`MATCHED banned word: "${w}" in "${handleDesc}"`);
                     reasons.push(`matched banned keyword: "${w}"`);
                 }
             }
@@ -264,10 +271,10 @@
             if (followers > 0 && friends >= settings.ratioLimit * followers) {
                 const actualRatio = (friends / followers).toFixed(1);
                 reasons.push(`follows ${actualRatio}x more accounts than followers (${friends} following / ${followers} followers, limit: ${settings.ratioLimit}x)`);
-                console.log(`🚫 Ratio filter triggered: ${friends}/${followers} = ${actualRatio}x (limit: ${settings.ratioLimit}x)`);
+                log(`Ratio filter triggered: ${friends}/${followers} = ${actualRatio}x (limit: ${settings.ratioLimit}x)`);
             } else if (followers > 0) {
                 const actualRatio = (friends / followers).toFixed(1);
-                console.log(`✅ Ratio OK: ${friends}/${followers} = ${actualRatio}x (limit: ${settings.ratioLimit}x)`);
+                log(`Ratio OK: ${friends}/${followers} = ${actualRatio}x (limit: ${settings.ratioLimit}x)`);
             }
 
             // Check minimum followers
@@ -283,21 +290,21 @@
         }
 
         filterContent(json) {
-            console.log('🔍 FILTER CONTENT CALLED');
+            log('FILTER CONTENT CALLED');
             if (!json || !json.data) {
-                console.log('❌ No data in response');
+                log('No data in response');
                 return;
             }
 
-            console.log('📋 Response data keys:', Object.keys(json.data));
+            log('Response data keys:', Object.keys(json.data));
 
             // CHECK FOR BULK BLOCKING: Retweeters API response
             if (json.data.retweeters_timeline && window.location.href.includes('/retweets')) {
-                console.log('🎯 RETWEETERS API DETECTED - Processing for bulk blocking!');
+                info('RETWEETERS API DETECTED - Processing for bulk blocking!');
                 if (window.blockModule) {
                     window.blockModule.processRetweetersAPIResponse(json);
                 } else {
-                    console.log('❌ blockModule not available');
+                    log('blockModule not available');
                 }
             }
             let instructions = [];
@@ -305,30 +312,30 @@
             // Try different response structures
             if (json.data.home?.home_timeline_urt?.instructions) {
                 instructions = json.data.home.home_timeline_urt.instructions;
-                console.log('✅ Found home timeline instructions:', instructions.length);
+                log('Found home timeline instructions:', instructions.length);
             } else if (json.data.threaded_conversation_with_injections_v2?.instructions) {
                 instructions = json.data.threaded_conversation_with_injections_v2.instructions;
-                console.log('✅ Found threaded conversation instructions:', instructions.length);
+                log('Found threaded conversation instructions:', instructions.length);
             } else if (json.data.user?.result?.timeline?.timeline?.instructions) {
                 instructions = json.data.user.result.timeline.timeline.instructions;
-                console.log('✅ Found user timeline instructions:', instructions.length);
+                log('Found user timeline instructions:', instructions.length);
             } else if (json.data.search_by_raw_query?.search_timeline?.timeline?.instructions) {
                 instructions = json.data.search_by_raw_query.search_timeline.timeline.instructions;
-                console.log('✅ Found search timeline instructions:', instructions.length);
+                log('Found search timeline instructions:', instructions.length);
             }
 
             if (instructions.length === 0) {
-                console.log('❌ No timeline instructions found in response structure');
-                console.log('🔍 Available data structure:', JSON.stringify(Object.keys(json.data), null, 2));
+                log('No timeline instructions found in response structure');
+                log('Available data structure:', JSON.stringify(Object.keys(json.data), null, 2));
                 return;
             }
 
             let processedCount = 0;
             let filteredCount = 0;
             instructions.forEach(instruction => {
-                console.log('📝 Processing instruction type:', instruction.type);
+                log('Processing instruction type:', instruction.type);
                 if (instruction.type === 'TimelineAddEntries' && instruction.entries) {
-                    console.log('📊 Processing', instruction.entries.length, 'entries');
+                    log('Processing', instruction.entries.length, 'entries');
                     instruction.entries.forEach(entry => {
                         const wasFiltered = this.processEntry(entry);
                         processedCount++;
@@ -337,23 +344,27 @@
                 }
             });
 
-            console.log(`✅ FILTERING COMPLETE: Processed ${processedCount} entries, filtered ${filteredCount}`);
+            if (filteredCount > 0) {
+                info(`FILTERING COMPLETE: Processed ${processedCount} entries, filtered ${filteredCount}`);
+            } else {
+                log(`FILTERING COMPLETE: Processed ${processedCount} entries, filtered ${filteredCount}`);
+            }
         }
 
         processEntry(entry) {
             if (!entry.content) {
-                console.log('🔍 Entry has no content, skipping');
+                log('Entry has no content, skipping');
                 return false;
             }
 
-            console.log('📄 Processing entry type:', entry.content.entryType);
+            log('Processing entry type:', entry.content.entryType);
             let wasFiltered = false;
 
             if (entry.content.entryType === 'TimelineTimelineItem') {
                 wasFiltered = this.processTimelineItem(entry.content.itemContent);
             } else if (entry.content.entryType === 'TimelineTimelineModule') {
                 if (entry.content.items) {
-                    console.log('📦 Processing module with', entry.content.items.length, 'items');
+                    log('Processing module with', entry.content.items.length, 'items');
                     entry.content.items?.forEach(item => {
                         if (this.processTimelineItem(item.item.itemContent)) {
                             wasFiltered = true;
@@ -361,7 +372,7 @@
                     });
                 }
             } else {
-                console.log('⏭️ Skipping entry type:', entry.content.entryType);
+                log('Skipping entry type:', entry.content.entryType);
             }
 
             return wasFiltered;
@@ -369,62 +380,108 @@
 
         processTimelineItem(itemContent) {
             if (!itemContent) {
-                console.log('⚠️ No item content');
+                log('No item content');
                 return false;
             }
 
-            console.log('📋 Item content type:', itemContent.itemType);
-            console.log('📋 Item content keys:', Object.keys(itemContent));
+            log('Item content type:', itemContent.itemType);
+            log('Item content keys:', Object.keys(itemContent));
 
-            if (itemContent.itemType !== 'TimelineTweet') {
-                console.log('⏭️ Skipping non-tweet item:', itemContent.itemType);
+            if (itemContent.itemType === 'TimelineTweet') {
+                return this.processTweetItem(itemContent);
+            } else if (itemContent.itemType === 'TimelineUser') {
+                return this.processUserItem(itemContent);
+            } else {
+                log('Skipping unknown item type:', itemContent.itemType);
                 return false;
             }
+        }
 
+        processTweetItem(itemContent) {
             const tweetResults = itemContent.tweet_results;
             if (!tweetResults?.result) {
-                console.log('⚠️ No tweet results found in item');
-                console.log('🔍 Available itemContent keys:', Object.keys(itemContent));
+                log('No tweet results found in item');
+                log('Available itemContent keys:', Object.keys(itemContent));
                 return false;
             }
 
-            console.log('🐦 Processing tweet...');
-            console.log('🔍 Tweet result typename:', tweetResults.result.__typename);
-            console.log('🔍 Tweet result keys:', Object.keys(tweetResults.result));
+            log('Processing tweet...');
+            log('Tweet result typename:', tweetResults.result.__typename);
+            log('Tweet result keys:', Object.keys(tweetResults.result));
             
             const userData = this.extractUserData(tweetResults.result);
             if (!userData) {
-                console.log('❌ Could not extract user data from tweet');
+                log('Could not extract user data from tweet');
                 return false;
             }
+
+            // INJECT USER STATS BADGE
+            this.injectUserStatsBadge(userData);
 
             // COLLECT USERS FOR BULK BLOCKING (if BlockWithLoveModule exists)
             if (window.blockModule && window.blockModule.collectUserForBulkBlocking) {
                 window.blockModule.collectUserForBulkBlocking(userData);
             }
 
-            console.log('👤 Checking user:', userData.handle, 'followers:', userData.followers);
+            // AUTO-BLOCKING CHECK (using existing user data with rest_id)
+            if (window.blockModule && settings.autoBlockEnabled) {
+                window.blockModule.checkAutoBlockWithUserData(userData);
+            }
+
+            log('Checking user:', userData.handle, 'followers:', userData.followers);
             
             // DON'T FILTER ON BULK BLOCKING PAGES - we need to see the users to block them
             const url = window.location.href;
             if (url.includes('/retweets') || url.includes('/quotes')) {
-                console.log('🔓 Skipping filter on bulk blocking page - need to see users to block them');
+                log('Skipping filter on bulk blocking page - need to see users to block them');
                 return false;
             }
             
             const reasons = this.getHideReasons(userData);
             if (reasons.length > 0) {
-                console.log('🚫 FILTERING TWEET from @' + userData.handle);
-                console.log('📋 Reasons:', reasons);
+                info(`🚫 HIDING TWEET from @${userData.handle} - Reasons: ${reasons.join('; ')}`);
                 this.hideTweet(tweetResults);
                 this.filteredCount++;
-                console.log(`✅ Tweet filtered! Total filtered: ${this.filteredCount}`);
                 eventLog(`Hidden @${userData.handle}`, `Reasons: ${reasons.join('; ')}`);
                 return true;
             } else {
-                console.log('✅ Tweet from @' + userData.handle + ' passed all filters');
+                log('Tweet from @' + userData.handle + ' passed all filters');
                 return false;
             }
+        }
+
+        processUserItem(itemContent) {
+            const userResults = itemContent.user_results;
+            if (!userResults?.result) {
+                log('No user results found in item');
+                log('Available itemContent keys:', Object.keys(itemContent));
+                return false;
+            }
+
+            log('Processing user item...');
+            log('User result typename:', userResults.result.__typename);
+            log('User result keys:', Object.keys(userResults.result));
+            
+            const userData = this.extractUserDataFromUserResult(userResults.result);
+            if (!userData) {
+                log('Could not extract user data from user item');
+                return false;
+            }
+
+            log('Extracted user data for followers page:', userData);
+
+            // INJECT USER STATS BADGE for followers page
+            this.injectUserStatsBadge(userData);
+
+            // COLLECT USERS FOR BULK BLOCKING (if BlockWithLoveModule exists)
+            if (window.blockModule && window.blockModule.collectUserForBulkBlocking) {
+                window.blockModule.collectUserForBulkBlocking(userData);
+            }
+
+            log(`Processed user: @${userData.handle} (${userData.followers} followers)`);
+            
+            // Don't filter users on followers pages - just add badges
+            return false;
         }
 
         hideTweet(tweetResults) {
@@ -468,47 +525,47 @@
             if (tweetData.core?.user_results?.result) {
                 userObj = tweetData.core.user_results.result;
                 legacyData = userObj.legacy;
-                console.log('✅ Found user data via Path 1: core.user_results.result');
+                log('Found user data via Path 1: core.user_results.result');
             }
             
             // Path 2: Alternative structure
             if (!legacyData && tweetData.core?.user?.legacy) {
                 userObj = tweetData.core.user;
                 legacyData = userObj.legacy;
-                console.log('✅ Found user data via Path 2: core.user.legacy');
+                log('Found user data via Path 2: core.user.legacy');
             }
             
             // Path 3: Direct legacy data
             if (!legacyData && tweetData.legacy) {
                 legacyData = tweetData.legacy;
                 userObj = tweetData;
-                console.log('✅ Found user data via Path 3: direct legacy');
+                log('Found user data via Path 3: direct legacy');
             }
 
             // Path 4: Check if it's a retweet or quoted tweet
             if (!legacyData && tweetData.quoted_status_result?.result?.core?.user_results?.result) {
                 userObj = tweetData.quoted_status_result.result.core.user_results.result;
                 legacyData = userObj.legacy;
-                console.log('✅ Found user data via Path 4: quoted_status_result');
+                log('Found user data via Path 4: quoted_status_result');
             }
 
             // Path 5: Check retweeted status
             if (!legacyData && tweetData.legacy?.retweeted_status_result?.result?.core?.user_results?.result) {
                 userObj = tweetData.legacy.retweeted_status_result.result.core.user_results.result;
                 legacyData = userObj.legacy;
-                console.log('✅ Found user data via Path 5: retweeted_status_result');
+                log('Found user data via Path 5: retweeted_status_result');
             }
 
             if (!legacyData) {
-                console.log('❌ Could not extract user data from tweet');
-                console.log('🔍 Available top-level keys:', Object.keys(tweetData));
+                log('Could not extract user data from tweet');
+                log('Available top-level keys:', Object.keys(tweetData));
                 if (tweetData.core) {
-                    console.log('🔍 Core keys:', Object.keys(tweetData.core));
+                    log('Core keys:', Object.keys(tweetData.core));
                 }
                 return null;
             }
 
-            console.log('📋 Raw legacy data:', legacyData);
+            log('Raw legacy data:', legacyData);
 
             // Check for relationship data in different locations
             let we_follow = false;
@@ -540,11 +597,645 @@
                 friends_count: parseInt(legacyData?.friends_count) || 0,
                 we_follow: we_follow,
                 followed_by: followed_by,
-                description: legacyData?.description || ''
+                description: legacyData?.description || '',
+                // NEW FIELDS:
+                statuses_count: parseInt(legacyData?.statuses_count) || 0,
+                created_at: legacyData?.created_at || userObj?.core?.created_at || '',
+                verified: legacyData?.verified || false
             };
 
-            console.log('✅ Extracted user data:', userData);
+            log('Extracted user data:', userData);
             return userData;
+        }
+
+        extractUserDataFromUserResult(userResult) {
+            if (!userResult) {
+                log('No user result provided');
+                return null;
+            }
+
+            const legacyData = userResult.legacy;
+            const coreData = userResult.core;
+
+            if (!legacyData && !coreData) {
+                log('No legacy or core data found in user result');
+                log('Available userResult keys:', Object.keys(userResult));
+                return null;
+            }
+
+            log('Raw legacy data for user:', legacyData);
+            log('Raw core data for user:', coreData);
+
+            // Extract relationship data
+            let we_follow = false;
+            let followed_by = false;
+
+            // Check legacy data first
+            if (legacyData?.following !== undefined) {
+                we_follow = Boolean(legacyData.following);
+            }
+            if (legacyData?.followed_by !== undefined) {
+                followed_by = Boolean(legacyData.followed_by);
+            }
+
+            // Check relationship_perspectives if available
+            if (userResult.relationship_perspectives) {
+                if (userResult.relationship_perspectives.following !== undefined) {
+                    we_follow = Boolean(userResult.relationship_perspectives.following);
+                }
+                if (userResult.relationship_perspectives.followed_by !== undefined) {
+                    followed_by = Boolean(userResult.relationship_perspectives.followed_by);
+                }
+            }
+
+            const userData = {
+                id: userResult.rest_id || userResult.id_str || 'unknown',
+                handle: legacyData?.screen_name || coreData?.screen_name || 'unknown',
+                name: legacyData?.name || coreData?.name || 'unknown',
+                followers: parseInt(legacyData?.followers_count || legacyData?.normal_followers_count) || 0,
+                friends_count: parseInt(legacyData?.friends_count) || 0,
+                we_follow: we_follow,
+                followed_by: followed_by,
+                description: legacyData?.description || '',
+                statuses_count: parseInt(legacyData?.statuses_count) || 0,
+                created_at: legacyData?.created_at || coreData?.created_at || '',
+                verified: legacyData?.verified || false
+            };
+
+            log('Extracted user data from followers API:', userData);
+            return userData;
+        }
+
+        async fetchSharedFollowersCount(userId) {
+            if (!userId || userId === 'unknown') {
+                return null;
+            }
+
+            // Check in-memory cache first
+            if (this.sharedFollowersCache.has(userId)) {
+                log(`Using in-memory cached shared followers for user ${userId}:`, this.sharedFollowersCache.get(userId));
+                return this.sharedFollowersCache.get(userId);
+            }
+
+            // Check persistent cache
+            const cachedData = this.getFromPersistentCache(userId);
+            if (cachedData !== null) {
+                log(`Using persistent cached shared followers for user ${userId}:`, cachedData);
+                // Also store in memory for faster access
+                this.sharedFollowersCache.set(userId, cachedData);
+                return cachedData;
+            }
+
+            try {
+                log(`Fetching shared followers count for user ${userId}...`);
+                
+                // Use the same authentication setup as BlockWithLoveModule
+                const bearerToken = this.getBearerToken();
+                const csrfToken = this.getCookie('ct0');
+
+                if (!bearerToken || !csrfToken) {
+                    log('Missing auth tokens for shared followers API');
+                    return null;
+                }
+
+                const url = `/i/api/1.1/friends/following/list.json?include_profile_interstitial_type=1&include_blocking=1&include_blocked_by=1&include_followed_by=1&include_want_retweets=1&include_mute_edge=1&include_can_dm=1&include_can_media_tag=1&include_ext_is_blue_verified=1&include_ext_verified_type=1&include_ext_profile_image_shape=1&skip_status=1&cursor=-1&user_id=${userId}&count=3&with_total_count=true`;
+                
+                const response = await fetch(`https://x.com${url}`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': '*/*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Authorization': `Bearer ${bearerToken}`,
+                        'X-Csrf-Token': csrfToken,
+                        'X-Twitter-Active-User': 'yes',
+                        'X-Twitter-Auth-Type': 'OAuth2Session',
+                        'X-Twitter-Client-Language': 'en'
+                    }
+                });
+
+                if (!response.ok) {
+                    log(`Shared followers API failed: ${response.status} ${response.statusText}`);
+                    return null;
+                }
+
+                const data = await response.json();
+                const sharedCount = data.total_count || 0;
+                
+                log(`Fetched shared followers count for user ${userId}: ${sharedCount}`);
+                
+                // Cache the result in both memory and persistent storage
+                this.sharedFollowersCache.set(userId, sharedCount);
+                this.saveToPersistentCache(userId, sharedCount);
+                
+                return sharedCount;
+            } catch (e) {
+                log(`Error fetching shared followers for user ${userId}:`, e.message);
+                return null;
+            }
+        }
+
+        getFromPersistentCache(userId) {
+            try {
+                const cacheKey = `sharedFollowers_${userId}`;
+                const cachedEntry = GM_getValue(cacheKey, null);
+                
+                if (!cachedEntry) {
+                    log(`No persistent cache entry for user ${userId}`);
+                    return null;
+                }
+
+                const parsed = JSON.parse(cachedEntry);
+                const now = Date.now();
+                const age = now - parsed.timestamp;
+
+                if (age > this.CACHE_DURATION) {
+                    log(`Persistent cache expired for user ${userId} (age: ${Math.round(age / (60 * 60 * 1000))}h)`);
+                    // Clean up expired cache entry
+                    GM_setValue(cacheKey, '');
+                    return null;
+                }
+
+                log(`Found valid persistent cache for user ${userId} (age: ${Math.round(age / (60 * 60 * 1000))}h)`);
+                return parsed.count;
+            } catch (e) {
+                log(`Error reading persistent cache for user ${userId}:`, e.message);
+                return null;
+            }
+        }
+
+        saveToPersistentCache(userId, count) {
+            try {
+                const cacheKey = `sharedFollowers_${userId}`;
+                const entry = {
+                    count: count,
+                    timestamp: Date.now()
+                };
+                GM_setValue(cacheKey, JSON.stringify(entry));
+                log(`Saved to persistent cache for user ${userId}: ${count} shared followers`);
+            } catch (e) {
+                log(`Error saving to persistent cache for user ${userId}:`, e.message);
+            }
+        }
+
+        clearExpiredPersistentCache() {
+            // Clean up expired cache entries periodically
+            try {
+                // This is a basic cleanup - GM doesn't provide a way to list all keys
+                // so we rely on the getFromPersistentCache method to clean up entries as they're accessed
+                log('Persistent cache cleanup completed (lazy cleanup on access)');
+            } catch (e) {
+                log('Error during cache cleanup:', e.message);
+            }
+        }
+
+        getCacheStats() {
+            const memoryCount = this.sharedFollowersCache.size;
+            
+            // Try to estimate persistent cache size (this is approximate)
+            let persistentCount = 0;
+            let validCount = 0;
+            let expiredCount = 0;
+            
+            // We can't iterate through GM storage, so this is just for the current session
+            // Users can call filterModule.getCacheStats() in console to see stats
+            
+            return {
+                memoryCache: memoryCount,
+                estimated: 'Call from console for detailed stats',
+                cacheHours: this.CACHE_DURATION / (60 * 60 * 1000)
+            };
+        }
+
+        getBearerToken() {
+            // Try to find bearer token in script tags
+            for (const script of document.querySelectorAll('script')) {
+                const m = script.textContent.match(/Bearer\s+([A-Za-z0-9%-]+)/);
+                if (m) {
+                    return m[1];
+                }
+            }
+            
+            // Fallback to known token
+            return 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+        }
+
+        getCookie(cname) {
+            const name = cname + '=';
+            const ca = document.cookie.split(';');
+            for (let i = 0; i < ca.length; ++i) {
+                const c = ca[i].trim();
+                if (c.indexOf(name) === 0) {
+                    return c.substring(name.length, c.length);
+                }
+            }
+            return '';
+        }
+
+        createUserStatsBadge(userData, sharedFollowersCount = null) {
+            const { friends_count, followers, statuses_count, created_at, we_follow, followed_by } = userData;
+            
+            // Calculate ratio
+            const ratio = followers > 0 ? (friends_count / followers).toFixed(1) : '∞';
+            
+            // Format creation date to MM/YY
+            let createdFormatted = '';
+            if (created_at) {
+                try {
+                    const date = new Date(created_at);
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const year = String(date.getFullYear()).slice(-2);
+                    createdFormatted = `${month}/${year}`;
+                } catch (e) {
+                    createdFormatted = 'N/A';
+                }
+            }
+            
+            // ADD RELATIONSHIP EMOJI
+            let relationshipEmoji = '';
+            let badgeColor = '';
+            if (followed_by && we_follow) {
+                relationshipEmoji = ' 🧑‍🤝‍🧑'; // Mutual
+                badgeColor = '#22c55e'; // Green - best relationship
+            } else if (followed_by) {
+                relationshipEmoji = ' 🧍'; // Follows me
+                badgeColor = '#a855f7'; // Purple - they're interested in me
+            } else if (we_follow) {
+                relationshipEmoji = ' 🚶'; // I follow them
+                badgeColor = '#f59e0b'; // Amber - I'm interested in them
+            } else {
+                relationshipEmoji = ' 🤷'; // No relationship
+                badgeColor = '#6b7280'; // Gray - neutral/minimal
+            }
+            
+            // Format numbers for display
+            const formatNumber = (num) => {
+                if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+                if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+                return num.toString();
+            };
+            
+            const followingFormatted = formatNumber(friends_count);
+            const followersFormatted = formatNumber(followers);
+            const postsFormatted = formatNumber(statuses_count);
+            
+            // Badge text with emoji and optional shared followers
+            let badgeText = `${followingFormatted}:${followersFormatted}, ${ratio} | ${postsFormatted} | ${createdFormatted}${relationshipEmoji}`;
+            
+            // Add shared followers count if available (in bold)
+            if (sharedFollowersCount !== null && sharedFollowersCount !== undefined) {
+                badgeText += ` | `;
+            }
+            
+            // Create badge element
+            const badge = document.createElement('div');
+            badge.className = 'user-stats-badge';
+            badge.style.cssText = `
+                display: inline-block;
+                background: ${badgeColor};
+                color: white;
+                font-size: 11px;
+                padding: 2px 6px;
+                border-radius: 4px;
+                margin-left: 6px;
+                font-family: system-ui;
+                font-weight: 500;
+                white-space: nowrap;
+            `;
+            
+            // Set initial text
+            badge.innerHTML = badgeText;
+            
+            // Add shared followers if available
+            if (sharedFollowersCount !== null && sharedFollowersCount !== undefined) {
+                const sharedElement = document.createElement('strong');
+                sharedElement.style.fontWeight = 'bold';
+                const emoji = sharedFollowersCount === 0 ? '🙅‍♂️' : '🤝';
+                sharedElement.textContent = `${sharedFollowersCount} ${emoji}`;
+                badge.appendChild(sharedElement);
+            }
+            
+            let tooltipText = `Following: ${friends_count} | Followers: ${followers} | Ratio: ${ratio} | Posts: ${statuses_count} | Joined: ${createdFormatted}`;
+            if (sharedFollowersCount !== null && sharedFollowersCount !== undefined) {
+                tooltipText += ` | Shared Followers: ${sharedFollowersCount}`;
+            }
+            badge.title = tooltipText;
+            
+            return badge;
+        }
+
+        async injectUserStatsBadge(userData) {
+            if (!userData || userData.handle === 'unknown') return;
+            
+            // Check if badges are enabled
+            if (!settings.badgesEnabled) {
+                return;
+            }
+            
+            // Store in cache
+            this.userCache.set(userData.handle, userData);
+            
+            // Apply badge immediately (without shared followers count initially)
+            this.applyBadgeToUser(userData);
+            
+            // Also apply with a small delay for newly loaded content
+            setTimeout(() => {
+                this.applyBadgeToUser(userData);
+            }, 200);
+            
+            // Fetch shared followers count asynchronously and update badge
+            this.fetchAndUpdateSharedFollowers(userData);
+            
+            // Schedule another application attempt for lazy-loaded content
+            setTimeout(() => {
+                this.applyBadgeToUser(userData);
+            }, 1000);
+        }
+
+        async fetchAndUpdateSharedFollowers(userData) {
+            try {
+                const sharedCount = await this.fetchSharedFollowersCount(userData.id);
+                if (sharedCount !== null) {
+                    // Update userData with shared followers count
+                    const updatedUserData = { ...userData, sharedFollowersCount: sharedCount };
+                    this.userCache.set(userData.handle, updatedUserData);
+                    
+                    // Reapply badge with shared followers count
+                    setTimeout(() => {
+                        this.applyBadgeToUserWithShared(updatedUserData);
+                    }, 100);
+                    
+                    log(`Updated cache for @${userData.handle} with ${sharedCount} shared followers`);
+                }
+            } catch (e) {
+                log(`Failed to fetch shared followers for @${userData.handle}:`, e.message);
+            }
+        }
+
+        applyBadgeToUser(userData) {
+            // Skip badges for your own account
+            if (this.isCurrentUser(userData.handle)) {
+                return;
+            }
+
+            // Simple approach: find user links and add badges, excluding navigation
+            setTimeout(() => {
+                const userLinks = document.querySelectorAll(`a[href="/${userData.handle}"]`);
+                
+                userLinks.forEach(link => {
+                    // Skip navigation elements specifically
+                    if (this.isNavigationElement(link)) {
+                        return;
+                    }
+                    
+                    // Find the container for this link
+                    const container = link.closest('[data-testid="UserCell"]') || 
+                                    link.closest('article') ||
+                                    link.closest('[data-testid="User-Name"]') ||
+                                    link.parentElement?.parentElement ||
+                                    link.parentElement;
+                    
+                    // Skip if badge already exists in this container
+                    if (container && container.querySelector('.user-stats-badge')) {
+                        return;
+                    }
+                    
+                    // Find the @username text and add badge after it
+                    this.addBadgeNearUsername(link, userData);
+                });
+            }, 100);
+        }
+
+        isCurrentUser(handle) {
+            // Simple check - get current user handle from profile link
+            if (!this._currentUserHandle) {
+                const profileLink = document.querySelector('[data-testid="AppTabBar_Profile_Link"]');
+                if (profileLink) {
+                    this._currentUserHandle = profileLink.getAttribute('href')?.replace('/', '');
+                }
+            }
+            return this._currentUserHandle === handle;
+        }
+
+        isNavigationElement(link) {
+            // Check if this link is in navigation/tab context
+            return (
+                link.getAttribute('role') === 'tab' ||
+                link.closest('[role="navigation"]') ||
+                link.closest('nav') ||
+                link.closest('[data-testid*="Tab"]') ||
+                link.closest('[data-testid*="Nav"]') ||
+                link.closest('[data-testid="AppTabBar"]') ||
+                link.textContent === 'Home' ||
+                link.textContent === 'Tweets'
+            );
+        }
+
+        addBadgeNearUsername(userLink, userData) {
+            // Look for @username text near this link
+            const container = userLink.closest('[data-testid="UserCell"]') || 
+                            userLink.closest('article') ||
+                            userLink.closest('[data-testid="User-Name"]') ||
+                            userLink.parentElement?.parentElement ||
+                            userLink.parentElement;
+            
+            if (!container) return;
+            
+            // Remove any existing badges for this user in this container
+            const existingBadges = container.querySelectorAll(`[data-user-handle="${userData.handle}"]`);
+            existingBadges.forEach(badge => badge.remove());
+            
+            // Always use the cached userData which might have sharedFollowersCount
+            const cachedUserData = this.userCache.get(userData.handle) || userData;
+            
+            const usernameText = `@${userData.handle}`;
+            
+            // Strategy 1: Find element with exact @username text
+            const allElements = container.querySelectorAll('*');
+            for (const element of allElements) {
+                if (element.textContent === usernameText && element.tagName !== 'A') {
+                    const parent = element.parentElement;
+                    if (parent) {
+                        const badge = this.createUserStatsBadge(cachedUserData, cachedUserData.sharedFollowersCount);
+                        badge.setAttribute('data-user-handle', userData.handle);
+                        parent.insertBefore(badge, element.nextSibling);
+                        return;
+                    }
+                }
+            }
+            
+            // Strategy 2: Look for grey text containing @username (common Twitter styling)
+            const greyElements = container.querySelectorAll('[style*="color: rgb(113, 118, 123)"]');
+            for (const element of greyElements) {
+                if (element.textContent.includes(usernameText)) {
+                    const parent = element.parentElement;
+                    if (parent) {
+                        const badge = this.createUserStatsBadge(cachedUserData, cachedUserData.sharedFollowersCount);
+                        badge.setAttribute('data-user-handle', userData.handle);
+                        parent.insertBefore(badge, element.nextSibling);
+                        return;
+                    }
+                }
+            }
+            
+            // Strategy 3: Look for any text element containing @username
+            for (const element of allElements) {
+                if (element.textContent.trim() === usernameText && 
+                    element.tagName !== 'A' && 
+                    !element.querySelector('a')) {
+                    const parent = element.parentElement;
+                    if (parent) {
+                        const badge = this.createUserStatsBadge(cachedUserData, cachedUserData.sharedFollowersCount);
+                        badge.setAttribute('data-user-handle', userData.handle);
+                        parent.insertBefore(badge, element.nextSibling);
+                        return;
+                    }
+                }
+            }
+            
+            // Strategy 4: Fallback - add after the user link if we found a suitable parent
+            if (userLink.parentElement) {
+                const parentDiv = userLink.parentElement;
+                // Check if there's a next sibling where we can insert
+                if (parentDiv.parentElement) {
+                    const badge = this.createUserStatsBadge(cachedUserData, cachedUserData.sharedFollowersCount);
+                    badge.setAttribute('data-user-handle', userData.handle);
+                    parentDiv.parentElement.insertBefore(badge, parentDiv.nextSibling);
+                }
+            }
+        }
+
+
+
+        applyBadgeToUserWithShared(userData) {
+            // Skip badges for your own account
+            if (this.isCurrentUser(userData.handle)) {
+                return;
+            }
+
+            // Find and replace existing badges for this user using data attribute
+            setTimeout(() => {
+                const existingBadges = document.querySelectorAll(`[data-user-handle="${userData.handle}"]`);
+                
+                existingBadges.forEach(badge => {
+                    // Create new badge with shared followers count
+                    const newStatsBadge = this.createUserStatsBadge(userData, userData.sharedFollowersCount);
+                    newStatsBadge.setAttribute('data-user-handle', userData.handle);
+                    
+                    // Replace the existing badge
+                    badge.parentNode.insertBefore(newStatsBadge, badge);
+                    badge.remove();
+                });
+            }, 100);
+        }
+
+        startCacheReapplication() {
+            log('Starting badge reapplication system...');
+            
+            // Periodic reapplication for cached users
+            setInterval(() => {
+                if (!settings.badgesEnabled || this.userCache.size === 0) return;
+                
+                this.userCache.forEach((userData, handle) => {
+                    // Skip current user
+                    if (this.isCurrentUser(handle)) return;
+                    
+                    // Always use applyBadgeToUser since it now checks cache automatically
+                    this.applyBadgeToUser(userData);
+                });
+            }, 4000);
+            
+            // Enhanced scroll-based reapplication for new content
+            let scrollTimeout;
+            let lastScrollPosition = 0;
+            
+            window.addEventListener('scroll', () => {
+                if (!settings.badgesEnabled || this.userCache.size === 0) return;
+                
+                const currentScrollPosition = window.scrollY;
+                const scrolledDown = currentScrollPosition > lastScrollPosition;
+                lastScrollPosition = currentScrollPosition;
+                
+                clearTimeout(scrollTimeout);
+                scrollTimeout = setTimeout(() => {
+                    // Apply badges to all cached users when new content loads
+                    this.userCache.forEach((userData, handle) => {
+                        if (this.isCurrentUser(handle)) return;
+                        this.applyBadgeToUser(userData);
+                    });
+                    
+                    // Also trigger badge application for any visible user links without badges
+                    this.applyBadgesToVisibleContent();
+                }, 500);
+            });
+            
+            // Mutation observer for new content (lightweight version)
+            const observer = new MutationObserver((mutations) => {
+                if (!settings.badgesEnabled || this.userCache.size === 0) return;
+                
+                let hasNewContent = false;
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                        for (const node of mutation.addedNodes) {
+                            if (node.nodeType === Node.ELEMENT_NODE) {
+                                // Check if new content contains user links
+                                if (node.querySelector && node.querySelector('a[href^="/"]')) {
+                                    hasNewContent = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                if (hasNewContent) {
+                    // Small delay to let DOM settle, then apply badges
+                    setTimeout(() => {
+                        this.userCache.forEach((userData, handle) => {
+                            if (this.isCurrentUser(handle)) return;
+                            this.applyBadgeToUser(userData);
+                        });
+                    }, 200);
+                }
+            });
+            
+            // Start observing with minimal config to reduce overhead
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+            
+            log('Badge reapplication system started');
+        }
+        
+        applyBadgesToVisibleContent() {
+            // Apply badges to any visible user links that don't have badges yet
+            if (!settings.badgesEnabled || this.userCache.size === 0) return;
+            
+            this.userCache.forEach((userData, handle) => {
+                if (this.isCurrentUser(handle)) return;
+                
+                // Find user links in the current viewport that don't have badges
+                const userLinks = document.querySelectorAll(`a[href="/${handle}"]`);
+                userLinks.forEach(link => {
+                    if (this.isNavigationElement(link)) return;
+                    
+                    // Check if link is roughly in viewport and doesn't have nearby badge
+                    const rect = link.getBoundingClientRect();
+                    const isVisible = rect.top >= -100 && rect.top <= window.innerHeight + 100;
+                    
+                    if (isVisible) {
+                        const container = link.closest('[data-testid="UserCell"]') || 
+                                        link.closest('article') ||
+                                        link.closest('[data-testid="User-Name"]') ||
+                                        link.parentElement?.parentElement;
+                        
+                        if (container && !container.querySelector('.user-stats-badge')) {
+                            this.addBadgeNearUsername(link, userData);
+                        }
+                    }
+                });
+            });
         }
     }
 
@@ -699,6 +1390,7 @@
             this.queryIds = {};
             this.requestLimit = this.p_limit(2);
             this.auto_blocked = new Set();
+            this.deferredBlocks = new Set(); // Track users with pending deferred blocks
             this.init();
         }
 
@@ -732,18 +1424,18 @@
             const bearerToken = this.getBearerToken();
             const csrfToken = this.getCookie('ct0');
             
-            console.log('🔐 Setting up AJAX with auth tokens...');
-            console.log('Bearer token:', bearerToken ? bearerToken.substring(0, 50) + '...' : 'none');
-            console.log('CSRF token:', csrfToken ? csrfToken.substring(0, 20) + '...' : 'none');
-            console.log('All cookies:', document.cookie.split(';').map(c => c.trim().split('=')[0]));
+            log('Setting up AJAX with auth tokens...');
+            log('Bearer token:', bearerToken ? bearerToken.substring(0, 50) + '...' : 'none');
+            log('CSRF token:', csrfToken ? csrfToken.substring(0, 20) + '...' : 'none');
+            log('All cookies:', document.cookie.split(';').map(c => c.trim().split('=')[0]));
             
             if (!csrfToken) {
-                console.log('❌ Missing CSRF token - checking for alternative names...');
+                log('Missing CSRF token - checking for alternative names...');
                 const altCsrf = this.getCookie('csrf_token') || this.getCookie('x-csrf-token') || this.getCookie('_csrf');
                 if (altCsrf) {
-                    console.log('🔑 Found alternative CSRF token');
+                    log('Found alternative CSRF token');
                 } else {
-                    console.log('❌ No CSRF token found at all');
+                    info('No CSRF token found - blocking disabled');
                     eventLog('Blocking disabled', 'No CSRF token');
                     return;
                 }
@@ -765,22 +1457,61 @@
                 }
             });
             
-            console.log('✅ AJAX client configured for blocking');
+            log('AJAX client configured for blocking');
             
             // Test the configuration
             this.testAuth();
+            
+            // Try to capture query IDs early by triggering a small request
+            this.earlyQueryIdCapture();
         }
         
         async testAuth() {
             try {
-                console.log('🧪 Testing authentication...');
-                const response = await this.ajax.get('/i/api/1.1/account/verify_credentials.json');
-                console.log('✅ Auth test successful:', response.data.screen_name);
+                log('Testing authentication...');
+                // Use a simpler endpoint that's more likely to work
+                const response = await this.ajax.get('/i/api/1.1/account/settings.json');
+                info('Block module auth test successful');
             } catch (e) {
-                console.log('❌ Auth test failed:', e.response?.status, e.response?.statusText);
+                // Don't show auth test failures unless in debug mode - they're not critical
+                log('Block module auth test failed:', e.response?.status, e.response?.statusText);
                 if (e.response?.status === 401) {
-                    console.log('💡 401 = Invalid/expired tokens. Try refreshing the page.');
+                    log('401 = Invalid/expired tokens. Try refreshing the page.');
+                } else if (e.response?.status === 404) {
+                    log('404 = Endpoint not found. Auth may still work for blocking.');
                 }
+            }
+        }
+
+        earlyQueryIdCapture() {
+            // Try to capture query IDs early by monitoring for common GraphQL requests
+            setTimeout(() => {
+                if (!this.queryIds.userByScreenName) {
+                    log('UserByScreenName query ID not captured yet. Auto-blocking will use fallback method.');
+                    log('💡 Visit a user profile or browse Twitter to trigger query ID capture for faster blocking.');
+                    // The query ID will be captured when any UserByScreenName request is made
+                    // This happens naturally when users visit profiles or when the system looks up users
+                }
+            }, 2000);
+        }
+
+        async getUserIdByScreenName(screenName) {
+            try {
+                log(`Attempting to get user ID for @${screenName} via fallback method...`);
+                
+                // Try the Twitter 1.1 API users/show endpoint
+                const response = await this.ajax.get(`/i/api/1.1/users/show.json?screen_name=${screenName}`);
+                
+                if (response.data && response.data.id_str) {
+                    log(`✅ Got user ID via REST API: ${response.data.id_str}`);
+                    return response.data.id_str;
+                }
+                
+                log('❌ Failed to get user ID via REST API');
+                return null;
+            } catch (e) {
+                log(`❌ Fallback user lookup failed for @${screenName}:`, e.message);
+                return null;
             }
         }
 
@@ -811,7 +1542,7 @@
             for (const script of document.querySelectorAll('script')) {
                 const m = script.textContent.match(/Bearer\s+([A-Za-z0-9%-]+)/);
                 if (m) {
-                    console.log('🔑 Found Bearer token in script');
+                    log('Found Bearer token in script');
                     return m[1];
                 }
             }
@@ -820,13 +1551,13 @@
             try {
                 const stored = localStorage.getItem('twitter_bearer_token');
                 if (stored) {
-                    console.log('🔑 Found Bearer token in localStorage');
+                    log('Found Bearer token in localStorage');
                     return stored;
                 }
             } catch (e) {}
             
             // Fallback to known token
-            console.log('🔑 Using fallback Bearer token');
+            log('Using fallback Bearer token');
             return 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
         }
 
@@ -842,29 +1573,29 @@
                 
                 // Debug: Log ALL fetch calls to see what's happening
                 if (url.includes('graphql')) {
-                    console.log('🌐 FETCH INTERCEPTED:', url.split('/').pop().split('?')[0]);
+                    log('FETCH INTERCEPTED:', url.split('/').pop().split('?')[0]);
                 }
                 
                 // Intercept Retweeters API responses for bulk blocking
                 if (url.includes('/Retweeters?')) {
-                    console.log('🎯 RETWEETERS FETCH DETECTED!');
-                    console.log('📍 Current URL:', window.location.href);
+                    log('RETWEETERS FETCH DETECTED!');
+                    log('Current URL:', window.location.href);
                     
                     if (window.location.href.includes('/retweets')) {
                         try {
                             const clonedResponse = response.clone();
                             const json = await clonedResponse.json();
-                            console.log('🔄 Processing Retweeters for bulk blocking...');
+                            log('Processing Retweeters for bulk blocking...');
                             self.processRetweetersAPIResponse(json);
                         } catch (e) {
-                            console.log('❌ Failed to process Retweeters:', e);
+                            log('Failed to process Retweeters:', e);
                         }
                     }
                 }
                 
                 return response;
             };
-            console.log('✅ Fetch hook installed for bulk blocking');
+            log('Fetch hook installed for bulk blocking');
         }
 
         hookXhr() {
@@ -887,22 +1618,25 @@
             let m;
             if ((m = /\/i\/api\/graphql\/([^/]+)\/Followers/.exec(url))) {
                 this.queryIds.followers = { id: m[1], feat: this.extractFeat(url) };
-                console.log('📋 Captured Followers query ID');
+                log('Captured Followers query ID');
             } else if ((m = /\/i\/api\/graphql\/([^/]+)\/UserByScreenName/.exec(url))) {
+                if (!this.queryIds.userByScreenName) {
+                    info('✅ UserByScreenName query ID captured - Auto-blocking now available!');
+                }
                 this.queryIds.userByScreenName = { id: m[1], feat: this.extractFeat(url) };
-                console.log('📋 Captured UserByScreenName query ID');
+                log('Captured UserByScreenName query ID');
             } else if ((m = /\/i\/api\/graphql\/([^/]+)\/Favoriters/.exec(url))) {
                 this.queryIds.favoriters = { id: m[1], feat: this.extractFeat(url) };
-                console.log('📋 Captured Favoriters query ID');
+                log('Captured Favoriters query ID');
             } else if ((m = /\/i\/api\/graphql\/([^/]+)\/Retweeters/.exec(url))) {
                 this.queryIds.retweeters = { id: m[1], feat: this.extractFeat(url) };
-                console.log('📋 Captured Retweeters query ID');
+                log('Captured Retweeters query ID');
             } else if ((m = /\/i\/api\/graphql\/([^/]+)\/TweetDetail/.exec(url))) {
                 this.queryIds.tweetDetail = { id: m[1], feat: this.extractFeat(url) };
-                console.log('📋 Captured TweetDetail query ID');
+                log('Captured TweetDetail query ID');
             } else if ((m = /\/i\/api\/graphql\/([^/]+)\/QuoteTweeters/.exec(url))) {
                 this.queryIds.quoteTweeters = { id: m[1], feat: this.extractFeat(url) };
-                console.log('📋 Captured QuoteTweeters query ID');
+                log('Captured QuoteTweeters query ID');
             }
         }
 
@@ -920,39 +1654,43 @@
         setupAutoBlock() {
             if (!settings.autoBlockEnabled) return;
 
-            const self = this;
+            // Auto-blocking is now handled directly during tweet processing
+            // when we already have the user data with rest_id
+            log('Auto-blocking enabled - will trigger during tweet processing');
+        }
+
+        checkAutoBlockWithUserData(userData) {
+            if (!settings.autoBlockEnabled || !userData || !userData.id || userData.id === 'unknown') return;
+
             const autoBlockWords = settings.autoBlockWords.split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
+            if (autoBlockWords.length === 0) return;
 
-            const scanAutoBlock = () => {
-                $('div[data-testid="UserCell"], div[data-testid="User-Name"]').each((_, el) => {
-                    const $el = $(el);
-                    if ($el.data('tbwlAuto')) return;
-                    $el.data('tbwlAuto', true);
-                    const link = $el.find('a[href^="/"]')[0];
-                    if (!link) return;
-                    const username = $(link).attr('href').split('/')[1];
-                    const displayName = $el.text();
-                    const reason = self.getAutoBlockReason(username, displayName, autoBlockWords);
-                    if (!self.auto_blocked.has(username) && reason) {
-                        self.auto_blocked.add(username);
-                        eventLog(`Auto-blocking @${username}`, `Matched word: "${reason}"`);
-                        self.blockByScreenName(username, reason);
-                    }
-                });
-            };
+            // Check if already blocked
+            if (this.auto_blocked.has(userData.handle)) return;
 
-            const startObserver = () => {
-                new MutationObserver(scanAutoBlock).observe(document.body, {
-                    childList: true,
-                    subtree: true
-                });
-                scanAutoBlock();
-            };
+            // Get reason for blocking
+            const reason = this.getAutoBlockReason(userData.handle, userData.name + ' ' + userData.description, autoBlockWords);
+            
+            if (reason) {
+                this.auto_blocked.add(userData.handle);
+                eventLog(`Auto-blocking @${userData.handle}`, `Matched word: "${reason}"`);
+                
+                // Use the user ID we already have instead of looking it up
+                this.blockUserDirectly(userData.id, userData.handle, reason);
+            }
+        }
 
-            if (document.body) {
-                startObserver();
-            } else {
-                document.addEventListener('DOMContentLoaded', startObserver);
+        async blockUserDirectly(userId, handle, reason) {
+            try {
+                info(`🚫 BLOCKING @${handle} - Reason: ${reason}`);
+                log(`Using existing user ID: ${userId} for @${handle}`);
+                
+                await this.requestLimit(() => this.blockUser(userId));
+                eventLog(`✅ Blocked @${handle}`, reason ? `Reason: ${reason}` : '');
+                info(`✅ BLOCKED @${handle} successfully`);
+            } catch (e) {
+                info(`❌ BLOCK FAILED for @${handle}: ${e.message}`);
+                eventLog(`❌ Auto-block failed for @${handle}`, e.message);
             }
         }
 
@@ -971,12 +1709,41 @@
 
         async blockByScreenName(name, reason) {
             try {
-                console.log(`🚫 Attempting to block @${name} for: ${reason}`);
+                info(`🚫 BLOCKING @${name} - Reason: ${reason}`);
                 
-                // Check if we have the required query ID
+                // Try direct username-based blocking first (fallback method)
+                const userId = await this.getUserIdByScreenName(name);
+                if (userId) {
+                    log(`Got user ID via fallback method: ${userId} for @${name}`);
+                    await this.requestLimit(() => this.blockUser(userId));
+                    eventLog(`✅ Blocked @${name}`, reason ? `Reason: ${reason}` : '');
+                    info(`✅ BLOCKED @${name} successfully`);
+                    return;
+                }
+                
+                // Check if we have the required query ID for GraphQL method
                 if (!this.queryIds.userByScreenName) {
-                    console.log('❌ No userByScreenName query ID available, skipping auto-block');
-                    eventLog(`Auto-block skipped for @${name}`, 'No GraphQL query ID available');
+                    // Check if we already have a deferred block for this user
+                    if (this.deferredBlocks.has(name)) {
+                        log(`Deferred block already pending for @${name}, skipping duplicate`);
+                        return;
+                    }
+                    
+                    log('No GraphQL query ID available yet, deferring auto-block...');
+                    this.deferredBlocks.add(name);
+                    
+                    // Defer the block attempt - try again in 5 seconds
+                    setTimeout(() => {
+                        this.deferredBlocks.delete(name); // Clean up tracking
+                        
+                        if (this.queryIds.userByScreenName) {
+                            log(`Retrying deferred block for @${name}`);
+                            this.blockByScreenName(name, reason);
+                        } else {
+                            info(`Auto-block still not possible for @${name} - missing GraphQL query ID`);
+                            eventLog(`Auto-block skipped for @${name}`, 'GraphQL query ID not captured yet');
+                        }
+                    }, 5000);
                     return;
                 }
 
@@ -986,51 +1753,51 @@
                 );
                 
                 if (!resp.data?.data?.user?.result?.rest_id) {
-                    console.log('❌ Could not get user ID from GraphQL response');
+                    log('Could not get user ID from GraphQL response');
                     return;
                 }
                 
                 const id = resp.data.data.user.result.rest_id;
-                console.log(`📋 Got user ID: ${id} for @${name}`);
+                log(`Got user ID: ${id} for @${name}`);
                 
                 await this.requestLimit(() => this.blockUser(id));
                 eventLog(`✅ Blocked @${name}`, reason ? `Reason: ${reason}` : '');
-                console.log(`✅ Auto-blocked user: @${name}`);
+                info(`✅ BLOCKED @${name} successfully`);
             } catch (e) {
-                console.error(`❌ Auto-block failed for @${name}:`, e.message);
+                info(`❌ BLOCK FAILED for @${name}: ${e.message}`);
                 if (e.response?.status === 400) {
-                    console.log('💡 400 error - likely invalid request format or missing auth');
+                    log('400 error - GraphQL request failed, possibly stale query ID');
                 } else if (e.response?.status === 401) {
-                    console.log('💡 401 error - authentication issue');
+                    log('401 error - authentication issue');
                 } else if (e.response?.status === 403) {
-                    console.log('💡 403 error - forbidden (rate limited or permissions)');
+                    log('403 error - forbidden (rate limited or permissions)');
                 }
                 eventLog(`❌ Auto-block failed for @${name}`, e.message);
             }
         }
 
         setupBlockingUI() {
-            console.log('🎛️ Setting up blocking UI...');
+            log('Setting up blocking UI...');
             
             const checkForBlockingPages = () => {
                 const url = window.location.href;
-                console.log('🔍 Checking URL for blocking opportunities:', url);
+                log('Checking URL for blocking opportunities:', url);
                 
                 // Check for retweets page: /status/123456/retweets
                 if (/\/status\/\d+\/retweets/.test(url)) {
-                    console.log('✅ Detected retweets page');
+                    log('Detected retweets page');
                     this.injectBlockingControls('retweets');
                 }
                 
                 // Check for quotes page: /status/123456/quotes  
                 else if (/\/status\/\d+\/quotes/.test(url)) {
-                    console.log('✅ Detected quotes page');
+                    log('Detected quotes page');
                     this.injectBlockingControls('quotes');
                 }
                 
                 // Check for followers page: /username/followers
                 else if (/\/[^/]+\/followers/.test(url)) {
-                    console.log('✅ Detected followers page');
+                    log('Detected followers page');
                     this.injectBlockingControls('followers');
                 }
             };
@@ -1043,7 +1810,7 @@
             const observer = new MutationObserver(() => {
                 if (window.location.href !== lastUrl) {
                     lastUrl = window.location.href;
-                    console.log('🔄 Navigation detected, checking for blocking pages...');
+                    log('Navigation detected, checking for blocking pages...');
                     setTimeout(checkForBlockingPages, 1000); // Delay to let page load
                 }
             });
@@ -1055,7 +1822,7 @@
         }
 
         injectBlockingControls(pageType) {
-            console.log(`🎛️ Injecting blocking controls for ${pageType} page`);
+            log(`Injecting blocking controls for ${pageType} page`);
             
             // Remove any existing controls
             $('.tbwl-blocking-controls').remove();
@@ -1127,25 +1894,25 @@
                 $(`#tbwl-mute-all-${pageType}`).click(() => this.startBulkAction(pageType, 'mute'));
                 $(`#tbwl-close-${pageType}`).click(() => $('.tbwl-blocking-controls').remove());
 
-                console.log(`✅ Blocking controls injected for ${pageType}`);
+                log(`Blocking controls injected for ${pageType}`);
             }, 2000);
         }
 
         async startBulkAction(pageType, action) {
-            console.log(`🚫 Starting bulk ${action} for ${pageType}`);
+            log(`Starting bulk ${action} for ${pageType}`);
             const statusEl = $(`#tbwl-status-${pageType}`);
             statusEl.text(`Starting bulk ${action}...`);
 
             // Try multiple selectors to find user elements
             let userCells = $('div[data-testid="UserCell"]');
-            console.log(`📊 Found ${userCells.length} UserCell elements`);
+            log(`Found ${userCells.length} UserCell elements`);
 
             if (userCells.length === 0) {
                 // Try alternative selectors
                 userCells = $('div[data-testid="cellInnerDiv"]').filter((i, el) => {
                     return $(el).find('a[href^="/"]').length > 0;
                 });
-                console.log(`📊 Found ${userCells.length} cellInnerDiv elements with profile links`);
+                log(`Found ${userCells.length} cellInnerDiv elements with profile links`);
             }
 
             if (userCells.length === 0) {
@@ -1156,18 +1923,18 @@
                            !$el.find('a[href^="/"][href*="/"]').attr('href').includes('/status/') &&
                            $el.find('a[href^="/"][href*="/"]').attr('href').split('/').length === 2;
                 });
-                console.log(`📊 Found ${userCells.length} elements with user profile links`);
+                log(`Found ${userCells.length} elements with user profile links`);
             }
 
             if (userCells.length === 0) {
-                console.log('🔍 Debugging: Looking for any profile links on page...');
+                log('Debugging: Looking for any profile links on page...');
                 const allLinks = $('a[href^="/"]');
-                console.log(`🔍 Total links starting with /: ${allLinks.length}`);
+                log(`Total links starting with /: ${allLinks.length}`);
                 
                 allLinks.each((i, link) => {
                     const href = $(link).attr('href');
                     if (i < 10) { // Log first 10 for debugging
-                        console.log(`🔍 Link ${i}: ${href}`);
+                        log(`Link ${i}: ${href}`);
                     }
                 });
 
@@ -1196,7 +1963,7 @@
                 }
 
                 if (!link.length) {
-                    console.log(`⚠️ No profile link found in cell ${i}`);
+                    log(`No profile link found in cell ${i}`);
                     continue;
                 }
 
@@ -1204,16 +1971,16 @@
                 const username = href.replace('/', '');
                 
                 if (!username || username.includes('/') || username.length < 1) {
-                    console.log(`⚠️ Invalid username extracted: "${username}" from href: "${href}"`);
+                    log(`Invalid username extracted: "${username}" from href: "${href}"`);
                     continue;
                 }
 
-                console.log(`👤 Processing user: @${username}`);
+                log(`Processing user: @${username}`);
 
                 // SAFETY CHECK: Skip if this is a mutual or follower
                 const userInfo = await this.getUserInfo(username);
                 if (userInfo && (userInfo.we_follow || userInfo.followed_by)) {
-                    console.log(`🛡️ SAFETY: Skipping @${username} - they are a mutual/follower`);
+                    log(`SAFETY: Skipping @${username} - they are a mutual/follower`);
                     statusEl.text(`Skipped @${username} (mutual/follower) - ${processed + 1}/${userCells.length}`);
                     processed++;
                     continue;
@@ -1230,7 +1997,7 @@
                     
                     succeeded++;
                 } catch (e) {
-                    console.error(`Failed to ${action} @${username}:`, e);
+                    log(`Failed to ${action} @${username}:`, e.message);
                 }
 
                 processed++;
@@ -1240,11 +2007,11 @@
             }
 
             statusEl.text(`✅ Complete! ${action === 'block' ? 'Blocked' : 'Muted'} ${succeeded}/${processed} users`);
-            console.log(`✅ Bulk ${action} complete: ${succeeded}/${processed} users`);
+            log(`Bulk ${action} complete: ${succeeded}/${processed} users`);
         }
 
         setupBulkBlockingFromAPI() {
-            console.log('🎛️ Setting up user collection for bulk blocking...');
+            log('Setting up user collection for bulk blocking...');
             this.retweetersData = [];
             this.quoteTweetersData = [];
 
@@ -1266,7 +2033,7 @@
         }
 
         processRetweetersAPIResponse(json) {
-            console.log('🔄 Processing Retweeters API response - handling multiple calls...');
+            log('Processing Retweeters API response - handling multiple calls...');
             
             const newUsers = this.extractUsersFromRetweetersAPI(json);
             
@@ -1284,61 +2051,61 @@
                 }
             });
             
-            console.log(`➕ Added ${addedCount} new retweeters (total: ${this.retweetersData.length})`);
+            log(`Added ${addedCount} new retweeters (total: ${this.retweetersData.length})`);
             this.updateBulkControlsStatus('retweets', this.retweetersData.length);
             
             return this.retweetersData;
         }
 
         extractUsersFromRetweetersAPI(json) {
-            console.log('📋 Extracting users from Retweeters GraphQL API response...');
+            log('Extracting users from Retweeters GraphQL API response...');
             
             const users = [];
             
             // For Retweeters GraphQL endpoint, users are in data.retweeters_timeline.timeline
             if (json.data?.retweeters_timeline?.timeline?.instructions) {
                 const instructions = json.data.retweeters_timeline.timeline.instructions;
-                console.log(`📋 Processing ${instructions.length} instructions...`);
+                log(`Processing ${instructions.length} instructions...`);
                 
                 instructions.forEach(instruction => {
-                    console.log(`📝 Instruction type: ${instruction.type}`);
+                    log(`Instruction type: ${instruction.type}`);
                     if (instruction.type === 'TimelineAddEntries' && instruction.entries) {
-                        console.log(`📊 Processing ${instruction.entries.length} entries...`);
+                        log(`Processing ${instruction.entries.length} entries...`);
                         instruction.entries.forEach((entry, i) => {
-                            console.log(`📄 Entry ${i}: ${entry.content?.entryType}`);
+                            log(`Entry ${i}: ${entry.content?.entryType}`);
                             const userData = this.extractUserFromRetweetEntry(entry);
                             if (userData) {
                                 users.push(userData);
-                                console.log(`👤 Found retweeter: @${userData.handle}`);
+                                log(`Found retweeter: @${userData.handle}`);
                             }
                         });
                     }
                 });
             } else {
-                console.log('❌ Expected data structure not found for Retweeters');
-                console.log('🔍 Available keys:', Object.keys(json.data || {}));
+                log('Expected data structure not found for Retweeters');
+                log('Available keys:', Object.keys(json.data || {}));
             }
 
-            console.log(`✅ Extracted ${users.length} retweeters from this API call`);
+            log(`Extracted ${users.length} retweeters from this API call`);
             return users;
         }
 
         extractUsersFromQuoteTweetsAPI(json) {
-            console.log('📋 Extracting users from Quote Tweets SearchTimeline API response...');
+            log('Extracting users from Quote Tweets SearchTimeline API response...');
             
             const users = [];
             
             // For SearchTimeline (quotes), tweets are in data.search_by_raw_query.search_timeline.timeline
             if (json.data?.search_by_raw_query?.search_timeline?.timeline?.instructions) {
                 const instructions = json.data.search_by_raw_query.search_timeline.timeline.instructions;
-                console.log(`📋 Processing ${instructions.length} search instructions...`);
+                log(`Processing ${instructions.length} search instructions...`);
                 
                 instructions.forEach(instruction => {
-                    console.log(`📝 Search instruction type: ${instruction.type}`);
+                    log(`Search instruction type: ${instruction.type}`);
                     if (instruction.type === 'TimelineAddEntries' && instruction.entries) {
-                        console.log(`📊 Processing ${instruction.entries.length} search entries...`);
+                        log(`Processing ${instruction.entries.length} search entries...`);
                         instruction.entries.forEach((entry, i) => {
-                            console.log(`📄 Search Entry ${i}: ${entry.content?.entryType} - ${entry.entryId}`);
+                            log(`Search Entry ${i}: ${entry.content?.entryType} - ${entry.entryId}`);
                             
                             // Based on your example, quotes are TimelineTweet entries
                             if (entry.content?.entryType === 'TimelineTimelineItem' && 
@@ -1349,26 +2116,26 @@
                                 const userData = this.extractUserData(tweetResult);
                                 if (userData && userData.handle !== 'unknown') {
                                     users.push(userData);
-                                    console.log(`👤 Found quote tweeter: @${userData.handle} (${userData.followers} followers)`);
+                                    log(`Found quote tweeter: @${userData.handle} (${userData.followers} followers)`);
                                 } else {
-                                    console.log(`⚠️ Could not extract user data from tweet ${entry.entryId}`);
+                                    log(`Could not extract user data from tweet ${entry.entryId}`);
                                 }
                             }
                         });
                     }
                 });
             } else {
-                console.log('❌ Expected search data structure not found for Quote Tweets');
+                log('Expected search data structure not found for Quote Tweets');
                 if (json.data) {
-                    console.log('🔍 Available data keys:', Object.keys(json.data));
+                    log('Available data keys:', Object.keys(json.data));
                     if (json.data.search_by_raw_query) {
-                        console.log('🔍 search_by_raw_query keys:', Object.keys(json.data.search_by_raw_query));
+                        log('search_by_raw_query keys:', Object.keys(json.data.search_by_raw_query));
                     }
                 }
             }
 
             this.quoteTweetersData = users;
-            console.log(`✅ Extracted ${users.length} quote tweeters total`);
+            log(`Extracted ${users.length} quote tweeters total`);
             this.updateBulkControlsStatus('quotes', users.length);
             return users;
         }
@@ -1384,6 +2151,12 @@
                     
                     // Extract user data using the same method as the filter module
                     const userData = this.extractUserDataFromRetweetResult(userResult);
+                    
+                    // INJECT USER STATS BADGE
+                    if (window.filterModule && userData) {
+                        window.filterModule.injectUserStatsBadge(userData);
+                    }
+                    
                     return userData;
                 }
             }
@@ -1398,7 +2171,7 @@
             const coreData = userResult.core;
             
             if (!legacyData && !coreData) {
-                console.log('❌ No legacy or core data found in user result');
+                log('No legacy or core data found in user result');
                 return null;
             }
 
@@ -1431,10 +2204,14 @@
                 friends_count: parseInt(legacyData?.friends_count) || 0,
                 we_follow: we_follow,
                 followed_by: followed_by,
-                description: legacyData?.description || ''
+                description: legacyData?.description || '',
+                // NEW FIELDS:
+                statuses_count: parseInt(legacyData?.statuses_count) || 0,
+                created_at: legacyData?.created_at || coreData?.created_at || '',
+                verified: legacyData?.verified || false
             };
 
-            console.log('✅ Extracted retweeter data:', userData);
+            log('Extracted retweeter data:', userData);
             return userData;
         }
 
@@ -1495,16 +2272,16 @@
                 pageType = 'retweets';
                 // Clear retweeters data when navigating to a new retweets page
                 this.retweetersData = [];
-                console.log('🔄 Cleared retweeters data for new retweets page');
+                log('Cleared retweeters data for new retweets page');
             } else if (/\/status\/\d+\/quotes/.test(url)) {
                 pageType = 'quotes';
                 // Clear quote tweeters data when navigating to a new quotes page  
                 this.quoteTweetersData = [];
-                console.log('🔄 Cleared quote tweeters data for new quotes page');
+                log('Cleared quote tweeters data for new quotes page');
             }
 
             if (pageType) {
-                console.log(`✅ Detected ${pageType} page, showing controls...`);
+                log(`Detected ${pageType} page, showing controls...`);
                 this.showBulkControls(pageType);
                 
                 // Show initial status based on page type
@@ -1658,7 +2435,7 @@
                              block && mute ? 'blocking & muting' :
                              block ? 'blocking' : 'muting';
 
-            console.log(`🚫 Starting ${dryRun ? 'DRY RUN' : 'LIVE'} bulk ${actionText} for ${users.length} ${pageType}`);
+            log(`Starting ${dryRun ? 'DRY RUN' : 'LIVE'} bulk ${actionText} for ${users.length} ${pageType}`);
             statusEl.text(`${dryRun ? '🔍 Previewing' : 'Processing'} ${users.length} users...`);
 
             let processed = 0;
@@ -1669,7 +2446,7 @@
             for (const user of users) {
                 // SAFETY CHECK: Skip mutuals and followers
                 if (user.we_follow || user.followed_by) {
-                    console.log(`🛡️ SAFETY: Skipping @${user.handle} - mutual/follower`);
+                    log(`SAFETY: Skipping @${user.handle} - mutual/follower`);
                     skipped++;
                     processed++;
                     statusEl.text(`Skipped @${user.handle} (mutual) - ${processed}/${users.length}`);
@@ -1682,7 +2459,7 @@
                     const actions = [];
                     if (block) actions.push('BLOCK');
                     if (mute) actions.push('MUTE');
-                    console.log(`🔍 DRY RUN: Would ${actions.join(' & ')} @${user.handle} (${user.followers} followers)`);
+                    log(`DRY RUN: Would ${actions.join(' & ')} @${user.handle} (${user.followers} followers)`);
                     statusEl.text(`Preview: Would ${actions.join(' & ').toLowerCase()} @${user.handle} (${processed + 1}/${users.length})`);
                     processed++;
                     continue;
@@ -1698,12 +2475,12 @@
                     
                     if (block) {
                         await this.requestLimit(() => this.blockUser(user.id));
-                        console.log(`✅ Blocked @${user.handle}`);
+                        log(`Blocked @${user.handle}`);
                     }
                     
                     if (mute) {
                         await this.requestLimit(() => this.muteUser(user.id));
-                        console.log(`✅ Muted @${user.handle}`);
+                        log(`Muted @${user.handle}`);
                     }
                     
                     succeeded++;
@@ -1717,10 +2494,10 @@
 
             if (dryRun) {
                 statusEl.text(`🔍 Preview complete! Would process ${wouldProcess} users, ${skipped} skipped (mutuals)`);
-                console.log(`🔍 DRY RUN complete: Would process ${wouldProcess} users, ${skipped} skipped`);
+                log(`DRY RUN complete: Would process ${wouldProcess} users, ${skipped} skipped`);
             } else {
                 statusEl.text(`✅ Complete! Processed ${succeeded} users, ${skipped} skipped (mutuals)`);
-                console.log(`✅ Live action complete: ${succeeded} processed, ${skipped} skipped`);
+                log(`Live action complete: ${succeeded} processed, ${skipped} skipped`);
             }
         }
 
@@ -1731,13 +2508,13 @@
             if (url.includes('/retweets')) {
                 if (!this.retweetersData.find(u => u.id === userData.id)) {
                     this.retweetersData.push(userData);
-                    console.log(`📝 Collected retweeter: @${userData.handle} (total: ${this.retweetersData.length})`);
+                    log(`Collected retweeter: @${userData.handle} (total: ${this.retweetersData.length})`);
                     this.updateBulkControlsStatus('retweets', this.retweetersData.length);
                 }
             } else if (url.includes('/quotes')) {
                 if (!this.quoteTweetersData.find(u => u.id === userData.id)) {
                     this.quoteTweetersData.push(userData);
-                    console.log(`📝 Collected quote tweeter: @${userData.handle} (total: ${this.quoteTweetersData.length})`);
+                    log(`Collected quote tweeter: @${userData.handle} (total: ${this.quoteTweetersData.length})`);
                     this.updateBulkControlsStatus('quotes', this.quoteTweetersData.length);
                 }
             }
@@ -1746,7 +2523,7 @@
         async getUserInfo(username) {
             try {
                 if (!this.queryIds.userByScreenName) {
-                    console.log('❌ No userByScreenName query ID for safety check');
+                    log('No userByScreenName query ID for safety check');
                     return null;
                 }
 
@@ -1762,7 +2539,7 @@
                 const userData = this.extractUserDataFromResult(resp.data.data.user.result);
                 return userData;
             } catch (e) {
-                console.log(`❌ Safety check failed for @${username}:`, e.message);
+                log(`Safety check failed for @${username}:`, e.message);
                 return null;
             }
         }
@@ -1799,10 +2576,20 @@
 
         async muteByScreenName(name, reason) {
             try {
-                console.log(`🔇 Attempting to mute @${name} for: ${reason}`);
+                info(`🔇 MUTING @${name} - Reason: ${reason}`);
+                
+                // Try direct username-based muting first (fallback method)
+                const userId = await this.getUserIdByScreenName(name);
+                if (userId) {
+                    log(`Got user ID via fallback method: ${userId} for @${name}`);
+                    await this.requestLimit(() => this.muteUser(userId));
+                    eventLog(`✅ Muted @${name}`, reason ? `Reason: ${reason}` : '');
+                    info(`✅ MUTED @${name} successfully`);
+                    return;
+                }
                 
                 if (!this.queryIds.userByScreenName) {
-                    console.log('❌ No userByScreenName query ID available');
+                    info(`❌ No userByScreenName query ID available and fallback failed for @${name}`);
                     return;
                 }
 
@@ -1812,22 +2599,24 @@
                 );
                 
                 if (!resp.data?.data?.user?.result?.rest_id) {
-                    console.log('❌ Could not get user ID from GraphQL response');
+                    log('Could not get user ID from GraphQL response');
                     return;
                 }
                 
                 const id = resp.data.data.user.result.rest_id;
                 await this.requestLimit(() => this.muteUser(id));
-                console.log(`✅ Muted user: @${name}`);
+                eventLog(`✅ Muted @${name}`, reason ? `Reason: ${reason}` : '');
+                info(`✅ MUTED @${name} successfully`);
             } catch (e) {
-                console.error(`❌ Mute failed for @${name}:`, e.message);
+                info(`❌ MUTE FAILED for @${name}: ${e.message}`);
+                eventLog(`❌ Mute failed for @${name}`, e.message);
                 throw e;
             }
         }
 
         blockUser(id) {
             eventLog('Blocking user ID', id);
-            console.log(`🚫 Blocking user ID: ${id}`);
+            log(`Blocking user ID: ${id}`);
             return this.ajax.post('/i/api/1.1/blocks/create.json', Qs.stringify({
                 user_id: id
             }));
@@ -1835,7 +2624,7 @@
 
         muteUser(id) {
             eventLog('Muting user ID', id);
-            console.log(`🔇 Muting user ID: ${id}`);
+            log(`Muting user ID: ${id}`);
             return this.ajax.post('/i/api/1.1/mutes/users/create.json', Qs.stringify({
                 user_id: id
             }));
@@ -1853,6 +2642,21 @@
             };
             const opName = opNameMap[key];
             if (!opName) throw new Error(`[TBWL] Unknown op ${key}`);
+            
+            // For UserByScreenName, ensure we have minimal required features to avoid 400 errors
+            if (key === 'userByScreenName') {
+                const minimalFeatures = {
+                    "hidden_profile_subscriptions_enabled": true,
+                    "rweb_tipjar_consumption_enabled": true,
+                    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": false,
+                    "responsive_web_graphql_timeline_navigation_enabled": true
+                };
+                
+                const variables = encodeURIComponent(JSON.stringify(vars));
+                const features = encodeURIComponent(JSON.stringify(minimalFeatures));
+                return `/i/api/graphql/${id}/${opName}?variables=${variables}&features=${features}`;
+            }
+            
             const variables = encodeURIComponent(JSON.stringify(vars));
             return `/i/api/graphql/${id}/${opName}?variables=${variables}${feat ? '&' + feat : ''}`;
         }
@@ -1862,8 +2666,13 @@
                 return await this.ajax.get(url);
             } catch (e) {
                 if (e.response?.status === 404 && this.queryIds[opKey]) {
+                    log(`404 error for ${opKey}, clearing stale query ID`);
                     delete this.queryIds[opKey];
                     // Retry logic would go here
+                } else if (e.response?.status === 400 && this.queryIds[opKey]) {
+                    log(`400 error for ${opKey}, possibly stale query ID or bad parameters`);
+                    // Don't delete the query ID for 400 errors as it might still be valid
+                    // The problem could be with parameters or rate limiting
                 }
                 throw e;
             }
@@ -1972,6 +2781,7 @@
 
                     <div class="setting-section">
                         <h3>⚙️ General</h3>
+                        <label><input type="checkbox" id="badgesEnabled"> Show User Stats Badges</label><br>
                         <label><input type="checkbox" id="debugMode"> Debug Mode</label><br>
                         <label><input type="checkbox" id="eventLogging"> Log Account Actions</label>
                     </div>
@@ -2045,6 +2855,7 @@
             $('#blockToolsEnabled').prop('checked', settings.blockToolsEnabled);
             $('#autoBlockEnabled').prop('checked', settings.autoBlockEnabled);
             $('#autoBlockWords').val(settings.autoBlockWords);
+            $('#badgesEnabled').prop('checked', settings.badgesEnabled);
             $('#debugMode').prop('checked', settings.debugMode);
             $('#eventLogging').prop('checked', settings.eventLogging);
         }
@@ -2062,6 +2873,7 @@
             settings.blockToolsEnabled = $('#blockToolsEnabled').is(':checked');
             settings.autoBlockEnabled = $('#autoBlockEnabled').is(':checked');
             settings.autoBlockWords = $('#autoBlockWords').val();
+            settings.badgesEnabled = $('#badgesEnabled').is(':checked');
             settings.debugMode = $('#debugMode').is(':checked');
             settings.eventLogging = $('#eventLogging').is(':checked');
 
@@ -2112,29 +2924,40 @@
     // ==================== INITIALIZATION ====================
     let filterModule, notInterestedModule, blockModule, settingsUI;
 
-    console.log('🚀 TWITTER ULTIMATE TOOL - SCRIPT LOADED');
-    console.log('📍 Current URL:', window.location.href);
-    console.log('📍 Document ready state:', document.readyState);
+    info('🚀 TWITTER ULTIMATE TOOL - SCRIPT LOADED');
+    log('Current URL:', window.location.href);
+    log('Document ready state:', document.readyState);
 
     function initializeModules() {
-        console.log('🔧 INITIALIZING MODULES...');
+        info('INITIALIZING MODULES...');
         loadSettings();
-        console.log('⚙️ Settings loaded:', settings);
+        log('Settings loaded:', settings);
+        
+        // Show environment info if debug mode is enabled
+        if (settings.debugMode) {
+            console.log('URL:', window.location.href);
+            console.log('User Agent:', navigator.userAgent);
+            console.log('Tampermonkey available:', typeof GM_setValue !== 'undefined');
+            console.log('jQuery available:', typeof $ !== 'undefined');
+            console.log('Axios available:', typeof axios !== 'undefined');
+            console.log('Qs available:', typeof Qs !== 'undefined');
+        }
 
         const start = () => {
-            console.log('🎯 STARTING MODULES...');
+            info('STARTING MODULES...');
             
             // Initialize UI first
             settingsUI = new SettingsUI();
-            console.log('✅ Settings UI initialized');
+            log('Settings UI initialized');
 
             // Initialize modules based on settings
             if (settings.filterEnabled) {
-                console.log('🔍 Initializing Filter Module...');
+                log('Initializing Filter Module...');
                 filterModule = new TwitterFilterModule();
-                console.log('✅ Filter Module initialized');
+                window.filterModule = filterModule; // Make globally accessible for badge injection
+                log('Filter Module initialized');
             } else {
-                console.log('❌ Filter module disabled via settings');
+                info('Filter module disabled via settings');
             }
 
             /*
@@ -2146,46 +2969,49 @@
             */
 
             if (settings.blockToolsEnabled) {
-                console.log('🚫 Initializing Block Module...');
+                log('Initializing Block Module...');
                 blockModule = new BlockWithLoveModule();
                 window.blockModule = blockModule; // Expose globally for user collection
-                console.log('✅ Block Module initialized and exposed globally');
+                log('Block Module initialized and exposed globally');
             } else {
-                console.log('❌ Block With Love module disabled via settings');
+                info('Block With Love module disabled via settings');
             }
 
-            console.log('🎉 TWITTER ULTIMATE TOOL FULLY INITIALIZED');
-            console.log(`📊 Settings - Follower limit: ${settings.followLimit}, ratio limit: ${settings.ratioLimit}`);
-            console.log(`🐛 Debug mode is ${settings.debugMode ? 'ON' : 'OFF'}`);
-            console.log('👀 Watch the console for filtering activity...');
+            info('🎉 TWITTER ULTIMATE TOOL FULLY INITIALIZED');
+            info(`Settings - Follower limit: ${settings.followLimit}, ratio limit: ${settings.ratioLimit}`);
+            info(`Debug mode is ${settings.debugMode ? 'ON' : 'OFF'}`);
+            if (settings.debugMode) {
+                info('Watch the console for detailed filtering activity...');
+                info('💡 Tip: Use filterModule.getCacheStats() in console to see cache statistics');
+            }
         };
 
         if (document.readyState === 'loading') {
-            console.log('⏳ Waiting for DOM to load...');
+            log('Waiting for DOM to load...');
             document.addEventListener('DOMContentLoaded', start);
         } else {
-            console.log('✅ DOM already loaded, starting immediately');
+            log('DOM already loaded, starting immediately');
             start();
         }
     }
 
     // Wait for dependencies and start the tool
     function waitForDependencies() {
-        console.log('⏳ Checking dependencies...');
+        log('Checking dependencies...');
         if (typeof $ !== 'undefined' && typeof axios !== 'undefined' && typeof Qs !== 'undefined') {
-            console.log('✅ All dependencies loaded, starting tool...');
+            info('All dependencies loaded, starting tool...');
             addStyles();
             initializeModules();
-            console.log('🎉 Twitter Ultimate Filter & Block Tool loaded successfully!');
+            info('🎉 Twitter Ultimate Filter & Block Tool loaded successfully!');
         } else {
-            console.log('❌ Dependencies not ready, retrying in 1 second...');
-            console.log('jQuery:', typeof $, 'Axios:', typeof axios, 'Qs:', typeof Qs);
+            log('Dependencies not ready, retrying in 1 second...');
+            log('jQuery:', typeof $, 'Axios:', typeof axios, 'Qs:', typeof Qs);
             setTimeout(waitForDependencies, 1000);
         }
     }
     
     function addStyles() {
-        console.log('🎨 Adding CSS styles...');
+        log('Adding CSS styles...');
         // Add styles for settings panel
         $('head').append(`
             <style>
@@ -2269,5 +3095,5 @@
         `);
     }
 
-    waitForDependencies();
+        waitForDependencies();
 })();
