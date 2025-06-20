@@ -31,7 +31,7 @@
         // Keyword/Ratio Filter Settings
         filterEnabled: true,
         bannedWords: '',
-        whitelistedHandles: '',
+        whitelistedHandles: 'someVIP,anotherVIP',
         followLimit: 100,
         ratioLimit: 5,
         
@@ -262,33 +262,20 @@
                 }
             }
 
-            // Enhanced filtering using sus score for non-followers/non-mutuals
+            // Basic filtering (followers, ratio) for non-followers/non-mutuals
             const followers = Number(user.followers) || 0;
             const friends = Number(user.friends_count) || 0;
             
             if (!user.we_follow) {
-                // Use sus score for more nuanced filtering (followers and strangers)
-                const susScore = this.calculateSusScore(user, 0);
-                
-                // Auto-filter only the worst offenders
-                if (susScore.score > 0.85) {
-                    reasons.push(`very high sus score (${(susScore.score * 100).toFixed(0)}%) - ${susScore.tier.label}`);
+                // Basic follower count filter
+                if (followers < settings.followLimit) {
+                    reasons.push(`low followers (${followers} < ${settings.followLimit})`);
                 }
                 
-                // For moderate sus scores, check if they match other red flags
-                else if (susScore.score > 0.6) {
-                    if (followers < settings.followLimit) {
-                        reasons.push(`moderate sus score (${(susScore.score * 100).toFixed(0)}%) + low followers (${followers})`);
-                    }
-                    
-                    // Check banned words as additional flag
-                    for (const w of this.bannedWords) {
-                        const handleDesc = ((user.handle || '') + " " + (user.name || '') + " " + (user.description || '')).toLowerCase();
-                        if (w && handleDesc.includes(w.toLowerCase())) {
-                            reasons.push(`moderate sus score (${(susScore.score * 100).toFixed(0)}%) + banned keyword: "${w}"`);
-                            break;
-                        }
-                    }
+                // Basic ratio filter (following/followers)
+                const ratio = friends / (followers + 1);
+                if (ratio > settings.ratioLimit) {
+                    reasons.push(`high ratio (${ratio.toFixed(1)} > ${settings.ratioLimit})`);
                 }
             } else {
                 // People I follow get a pass - no filtering
