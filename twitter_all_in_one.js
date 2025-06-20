@@ -30,8 +30,8 @@
     const DEFAULT_SETTINGS = {
         // Keyword/Ratio Filter Settings
         filterEnabled: true,
-        bannedWords: 'groyper,nafo,goyim,goy,🇺🇸🇮🇱,🇮🇱🇺🇸,🇺🇸,🇮🇱,☦,✝,☦️,✝️,christisking,christ is king',
-        whitelistedHandles: 'someVIP,anotherVIP',
+        bannedWords: '',
+        whitelistedHandles: '',
         followLimit: 100,
         ratioLimit: 5,
         
@@ -44,7 +44,7 @@
         // Block With Love Settings
         blockToolsEnabled: true,
         autoBlockEnabled: true,
-        autoBlockWords: 'groyper,fella,1488,noticer,troon,goyim,goy',
+        autoBlockWords: '',
 
         // UI Settings
         showSettingsPanel: true,
