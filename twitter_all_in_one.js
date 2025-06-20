@@ -30,7 +30,7 @@
     const DEFAULT_SETTINGS = {
         // Keyword/Ratio Filter Settings
         filterEnabled: true,
-        bannedWords: '',
+        bannedWords: 'groyper,nafo,goyim,goy,🇺🇸🇮🇱,🇮🇱🇺🇸,🇺🇸,🇮🇱,☦,✝,☦️,✝️,christisking,christ is king',
         whitelistedHandles: 'someVIP,anotherVIP',
         followLimit: 100,
         ratioLimit: 5,
@@ -44,7 +44,7 @@
         // Block With Love Settings
         blockToolsEnabled: true,
         autoBlockEnabled: true,
-        autoBlockWords: '',
+        autoBlockWords: 'groyper,fella,1488,noticer,troon,goyim,goy',
 
         // UI Settings
         showSettingsPanel: true,
@@ -262,24 +262,37 @@
                 }
             }
 
-            // Check ratio filtering (only if user has followers)
+            // Enhanced filtering using sus score for non-followers/non-mutuals
             const followers = Number(user.followers) || 0;
             const friends = Number(user.friends_count) || 0;
             
-            // Flag accounts that follow significantly more people than follow them
-            // Example: if ratioLimit is 10, flag accounts following 10x+ more than their followers
-            if (followers > 0 && friends >= settings.ratioLimit * followers) {
-                const actualRatio = (friends / followers).toFixed(1);
-                reasons.push(`follows ${actualRatio}x more accounts than followers (${friends} following / ${followers} followers, limit: ${settings.ratioLimit}x)`);
-                log(`Ratio filter triggered: ${friends}/${followers} = ${actualRatio}x (limit: ${settings.ratioLimit}x)`);
-            } else if (followers > 0) {
-                const actualRatio = (friends / followers).toFixed(1);
-                log(`Ratio OK: ${friends}/${followers} = ${actualRatio}x (limit: ${settings.ratioLimit}x)`);
-            }
-
-            // Check minimum followers
-            if (followers < settings.followLimit) {
-                reasons.push(`has fewer than ${settings.followLimit} followers (${followers})`);
+            if (!user.we_follow) {
+                // Use sus score for more nuanced filtering (followers and strangers)
+                const susScore = this.calculateSusScore(user, 0);
+                
+                // Auto-filter only the worst offenders
+                if (susScore.score > 0.85) {
+                    reasons.push(`very high sus score (${(susScore.score * 100).toFixed(0)}%) - ${susScore.tier.label}`);
+                }
+                
+                // For moderate sus scores, check if they match other red flags
+                else if (susScore.score > 0.6) {
+                    if (followers < settings.followLimit) {
+                        reasons.push(`moderate sus score (${(susScore.score * 100).toFixed(0)}%) + low followers (${followers})`);
+                    }
+                    
+                    // Check banned words as additional flag
+                    for (const w of this.bannedWords) {
+                        const handleDesc = ((user.handle || '') + " " + (user.name || '') + " " + (user.description || '')).toLowerCase();
+                        if (w && handleDesc.includes(w.toLowerCase())) {
+                            reasons.push(`moderate sus score (${(susScore.score * 100).toFixed(0)}%) + banned keyword: "${w}"`);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // People I follow get a pass - no filtering
+                log(`Skipping filter for followed user: @${user.handle}`);
             }
 
             if (reasons.length > 0) {
@@ -832,6 +845,117 @@
             return '';
         }
 
+        // Sus Score System - New Quality Assessment
+
+
+
+        getAccountAgeMonths(created_at) {
+            if (!created_at) return 1;
+            try {
+                const createdDate = new Date(created_at);
+                const now = new Date();
+                const diffTime = Math.abs(now - createdDate);
+                const diffMonths = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 30));
+                return Math.max(1, diffMonths);
+            } catch (e) {
+                return 1;
+            }
+        }
+
+        checkBioToxicity(description) {
+            if (!description) return 0;
+            const toxicWords = this.bannedWords || [];
+            const desc = description.toLowerCase();
+            let toxicMatches = 0;
+            
+            for (const word of toxicWords) {
+                if (desc.includes(word.toLowerCase())) {
+                    toxicMatches++;
+                }
+            }
+            
+            return Math.min(1, toxicMatches / 3); // Scale based on number of matches
+        }
+
+        calculateSusScore(userData, sharedFollowers = 0) {
+            const scores = {};
+            const accountAgeMonths = this.getAccountAgeMonths(userData.created_at);
+            const followers = userData.followers || 0;
+            const following = userData.friends_count || 0;
+            
+            // 1. Shared Followers Score (30%) - HUGE weight
+            if (sharedFollowers === 0) {
+                scores.sharedFollowers = 0.30; // Big penalty for 0 shared
+            } else if (sharedFollowers < 3) {
+                scores.sharedFollowers = 0.20; // Still bad
+            } else if (sharedFollowers < 10) {
+                scores.sharedFollowers = 0.10; // Okay
+            } else {
+                scores.sharedFollowers = 0.0; // Good, many shared followers
+            }
+            
+            // 2. Age vs Followers Expectation (25%)
+            // Old accounts with low followers = very sus
+            const expectedFollowers = Math.max(50, accountAgeMonths * 5); // 5 followers per month minimum
+            if (followers < expectedFollowers * 0.2) {
+                scores.ageVsFollowers = 0.25; // Way below expectation
+            } else if (followers < expectedFollowers * 0.5) {
+                scores.ageVsFollowers = 0.15; // Below expectation
+            } else if (followers < expectedFollowers) {
+                scores.ageVsFollowers = 0.08; // Slightly below
+            } else {
+                scores.ageVsFollowers = 0.0; // Meeting or exceeding expectation
+            }
+            
+            // 3. Following vs Followers Ratio (20%) - Fixed logic
+            const ratio = following / (followers + 1);
+            if (ratio > 20) {
+                scores.ratio = 0.20; // Following way too many
+            } else if (ratio > 10) {
+                scores.ratio = 0.15;
+            } else if (ratio > 5) {
+                scores.ratio = 0.10;
+            } else if (ratio > 2) {
+                scores.ratio = 0.05;
+            } else {
+                scores.ratio = 0.0; // Good ratio (more followers than following)
+            }
+            
+            // 4. Activity Quality (15%) - High posts but low followers = spam
+            const postsPerFollower = userData.statuses_count / (followers + 1);
+            if (postsPerFollower > 100) {
+                scores.activityQuality = 0.15; // Posting too much vs followers
+            } else if (postsPerFollower > 50) {
+                scores.activityQuality = 0.10;
+            } else if (postsPerFollower > 20) {
+                scores.activityQuality = 0.05;
+            } else {
+                scores.activityQuality = 0.0; // Reasonable post ratio
+            }
+            
+            // 5. Verification Bonus (5%)
+            scores.verification = userData.verified ? 0.0 : 0.05;
+            
+            // 6. Bio Toxicity (5%) - Reduced weight
+            scores.toxicity = this.checkBioToxicity(userData.description) * 0.05;
+            
+            // Total score
+            const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
+            
+            return {
+                score: totalScore,
+                components: scores,
+                tier: this.getScoreTier(totalScore)
+            };
+        }
+
+        getScoreTier(score) {
+            if (score <= 0.15) return { emoji: '🟢', label: 'Chill', color: '#22c55e' };
+            if (score <= 0.30) return { emoji: '🟡', label: 'Meh', color: '#eab308' };
+            if (score <= 0.50) return { emoji: '🟠', label: 'Sketch', color: '#f97316' };
+            return { emoji: '🔴', label: 'Dumpster fire', color: '#ef4444' };
+        }
+
         createUserStatsBadge(userData, sharedFollowersCount = null) {
             const { friends_count, followers, statuses_count, created_at, we_follow, followed_by } = userData;
             
@@ -913,6 +1037,30 @@
                 const emoji = sharedFollowersCount === 0 ? '🙅‍♂️' : '🤝';
                 sharedElement.textContent = `${sharedFollowersCount} ${emoji}`;
                 badge.appendChild(sharedElement);
+            }
+            
+            // Add sus score pill (everyone except people I follow)
+            if (!we_follow) {
+                const susScore = this.calculateSusScore(userData, sharedFollowersCount || 0);
+                
+                // Add separator
+                const separator = document.createTextNode(' | ');
+                badge.appendChild(separator);
+                
+                const pill = document.createElement('span');
+                pill.style.cssText = `
+                    display: inline-block;
+                    padding: 1px 4px;
+                    border-radius: 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    background: ${susScore.tier.color};
+                    color: white;
+                `;
+                pill.textContent = susScore.tier.emoji;
+                pill.title = `Sus Score: ${(susScore.score * 100).toFixed(0)}% - ${susScore.tier.label}`;
+                
+                badge.appendChild(pill);
             }
             
             let tooltipText = `Following: ${friends_count} | Followers: ${followers} | Ratio: ${ratio} | Posts: ${statuses_count} | Joined: ${createdFormatted}`;
@@ -1667,6 +1815,12 @@
 
             // Check if already blocked
             if (this.auto_blocked.has(userData.handle)) return;
+
+            // SAFETY CHECK: Don't auto-block followers or people we follow
+            if (userData.followed_by || userData.we_follow) {
+                log(`SAFETY: Skipping auto-block for @${userData.handle} - they are ${userData.followed_by ? 'a follower' : 'someone we follow'}`);
+                return;
+            }
 
             // Get reason for blocking
             const reason = this.getAutoBlockReason(userData.handle, userData.name + ' ' + userData.description, autoBlockWords);
